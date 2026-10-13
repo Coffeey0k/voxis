@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Voxis
+Comment=Voxis Messenger
+Exec=Voxis
+Terminal=false
+Categories=Network;InstantMessaging;
