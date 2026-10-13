@@ -74,12 +74,21 @@ jobs:
           done
       - name: Build installable debug APK
         shell: bash
+        env:
+          VOXIS_FIREBASE_API_KEY: ${{ secrets.VOXIS_FIREBASE_API_KEY }}
+          VOXIS_FIREBASE_APP_ID: ${{ secrets.VOXIS_FIREBASE_APP_ID }}
+          VOXIS_FIREBASE_SENDER_ID: ${{ secrets.VOXIS_FIREBASE_SENDER_ID }}
+          VOXIS_FIREBASE_PROJECT_ID: ${{ secrets.VOXIS_FIREBASE_PROJECT_ID }}
         run: |
           set -euo pipefail
           cd mobile_app
           for attempt in 1 2 3; do
             echo "Building APK (attempt $attempt/3)"
-            if flutter build apk --debug; then
+            if flutter build apk --debug \
+              --dart-define=VOXIS_FIREBASE_API_KEY="$VOXIS_FIREBASE_API_KEY" \
+              --dart-define=VOXIS_FIREBASE_APP_ID="$VOXIS_FIREBASE_APP_ID" \
+              --dart-define=VOXIS_FIREBASE_SENDER_ID="$VOXIS_FIREBASE_SENDER_ID" \
+              --dart-define=VOXIS_FIREBASE_PROJECT_ID="$VOXIS_FIREBASE_PROJECT_ID"; then
               exit 0
             fi
             if [ "$attempt" -eq 3 ]; then
