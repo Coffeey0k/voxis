@@ -1,0 +1,42 @@
+name: Build Voxis Android APK
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android-apk.yml'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Create Android project wrapper
+        run: |
+          flutter create --platforms=android --org app.voxis mobile_app
+          cp mobile/lib/main.dart mobile_app/lib/main.dart
+          cd mobile_app
+          flutter pub add http
+          flutter pub add web_socket_channel
+          mkdir -p android/app/src/debug
+          cat > android/app/src/debug/AndroidManifest.xml <<'MANIFEST'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <application android:usesCleartextTraffic="true" />
+          </manifest>
+          MANIFEST
+      - name: Build installable debug APK
+        run: |
+          cd mobile_app
+          flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxis-android-debug-apk
+          path: mobile_app/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
