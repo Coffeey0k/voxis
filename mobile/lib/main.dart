@@ -113,6 +113,7 @@ class _VoxisHomeState extends State<VoxisHome> {
   String _status = 'Not connected';
   List<Map<String, dynamic>> _users = [];
   List<Map<String, dynamic>> _messages = [];
+  final Set<int> _readMarkedIds = {};
   String _displayName = '';
   String _bio = '';
   String _chatSearch = '';
@@ -293,6 +294,18 @@ class _VoxisHomeState extends State<VoxisHome> {
       final messages = (data['messages'] as List)
           .map((item) => Map<String, dynamic>.from(item as Map))
           .toList();
+      for (final item in messages) {
+        final id = item['id'];
+        if (item['sender'] != _myUsername && id is int && !_readMarkedIds.contains(id)) {
+          try {
+            final receipt = await http.post(
+              Uri.parse('$_baseUrl/api/messages/$id/read'),
+              headers: _headers,
+            ).timeout(const Duration(seconds: 8));
+            if (receipt.statusCode >= 200 && receipt.statusCode < 300) _readMarkedIds.add(id);
+          } catch (_) {}
+        }
+      }
       if (mounted && _peer == peer) {
         final changed = jsonEncode(_messages) != jsonEncode(messages);
         if (changed) {
