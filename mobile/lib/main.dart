@@ -114,6 +114,7 @@ class _VoxisHomeState extends State<VoxisHome> {
   List<Map<String, dynamic>> _messages = [];
   String _displayName = '';
   String _bio = '';
+  String _chatSearch = '';
   String? _avatarUrl;
   bool _uploading = false;
   final ScrollController _chatScroll = ScrollController();
@@ -636,13 +637,28 @@ class _VoxisHomeState extends State<VoxisHome> {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+          child: TextField(
+            onChanged: (value) => setState(() => _chatSearch = value.trim().toLowerCase()),
+            decoration: const InputDecoration(
+              hintText: 'Search contacts…',
+              prefixIcon: Icon(Icons.search_rounded),
+              isDense: true,
+            ),
+          ),
+        ),
         if (_users.length > 1)
           SizedBox(
             height: 56,
             child: ListView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              children: _users.map((user) {
+              children: _users.where((user) {
+                final username = user['username']?.toString().toLowerCase() ?? '';
+                final name = user['display_name']?.toString().toLowerCase() ?? '';
+                return username.contains(_chatSearch) || name.contains(_chatSearch);
+              }).map((user) {
                 final username = user['username'] as String;
                 final selected = username == _peer;
                 final name = user['display_name']?.toString() ?? username;
