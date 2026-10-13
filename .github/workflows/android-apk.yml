@@ -19,9 +19,25 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Create Android project wrapper
+        shell: bash
         run: |
+          set -euo pipefail
+
+          # Generate an Android-capable Flutter wrapper.
           flutter create --platforms=android --org app.voxis mobile_app
-          cp mobile/lib/main.dart mobile_app/lib/main.dart
+
+          # Prefer the repository's app source, but tolerate an existing wrapper source.
+          if [ -f mobile/lib/main.dart ]; then
+            echo "Found mobile/lib/main.dart — copying app source into wrapper"
+            rm -rf mobile_app/lib
+            cp -R mobile/lib mobile_app/lib
+          elif [ -f mobile_app/lib/main.dart ]; then
+            echo "Found mobile_app/lib/main.dart — keeping wrapper source"
+          else
+            echo "::error::No Flutter entry point found at mobile/lib/main.dart or mobile_app/lib/main.dart"
+            exit 1
+          fi
+
           cd mobile_app
           flutter pub add http
           flutter pub add web_socket_channel
