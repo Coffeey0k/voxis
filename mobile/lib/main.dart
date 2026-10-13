@@ -391,6 +391,16 @@ class _VoxisHomeState extends State<VoxisHome> {
     }
   }
 
+  String _displayTime(dynamic raw) {
+    if (raw == null) return '';
+    final parsed = DateTime.tryParse(raw.toString());
+    if (parsed == null) return '';
+    final local = parsed.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
   Future<void> _sendMessage() async {
     final body = _message.text.trim();
     final peer = _peer;
