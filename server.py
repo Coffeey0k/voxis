@@ -46,6 +46,15 @@ def migrate():
             if n not in cols(c,"messages"): c.execute(f"ALTER TABLE messages ADD COLUMN {n} {ddl}")
         c.execute("CREATE INDEX IF NOT EXISTS idx_group_messages ON messages(group_id,id)")
         if 3 not in done: c.execute("INSERT INTO schema_migrations VALUES(3,?)",(now(),))
+        if 4 not in done:
+            c.executescript("""
+            CREATE TABLE IF NOT EXISTS message_receipts(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,delivered_at TEXT,read_at TEXT,PRIMARY KEY(message_id,username));
+            CREATE TABLE IF NOT EXISTS message_reactions(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,reaction TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(message_id,username,reaction));
+            CREATE TABLE IF NOT EXISTS blocked_users(blocker TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,blocked TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,created_at TEXT NOT NULL,PRIMARY KEY(blocker,blocked),CHECK(blocker<>blocked));
+            CREATE TABLE IF NOT EXISTS pinned_messages(username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,created_at TEXT NOT NULL,PRIMARY KEY(username,message_id));
+            CREATE INDEX IF NOT EXISTS idx_receipts_user ON message_receipts(username,read_at);
+            """)
+            c.execute("INSERT INTO schema_migrations VALUES(4,?)",(now(),))
 @app.on_event("startup")
 def startup(): migrate()
 
@@ -61,6 +70,12 @@ class GroupIn(BaseModel):
 class MessageIn(BaseModel):
     recipient:Optional[str]=None; group_id:Optional[int]=None
     body:str=Field(default="",max_length=4000); attachment_id:Optional[int]=None; encrypted:bool=False
+class EditMessage(BaseModel):
+    body:str=Field(min_length=1,max_length=4000)
+class ReactionIn(BaseModel):
+    reaction:str=Field(min_length=1,max_length=16)
+class BlockIn(BaseModel):
+    username:str=Field(min_length=3,max_length=24)
 class DeviceIn(BaseModel):
     id:str=Field(min_length=3,max_length=100); platform:str=Field(min_length=1,max_length=30); push_token:Optional[str]=None
 
@@ -256,6 +271,127 @@ async def send(d:MessageIn,authorization:Optional[str]=Header(default=None)):
         targets=[u,d.recipient] if d.recipient else [r["username"] for r in c.execute("SELECT username FROM group_members WHERE group_id=?",(d.group_id,)).fetchall()]
     for target in set(targets):await notify(target,{"type":"message","message":msg})
     return {"message":msg}
+def accessible_message(c, message_id, username):
+    row=c.execute("SELECT * FROM messages WHERE id=?",(message_id,)).fetchone()
+    if not row: raise HTTPException(404,"Сообщение не найдено")
+    if row["group_id"] is not None:
+        member(c,row["group_id"],username)
+    elif username not in (row["sender"],row["recipient"]):
+        raise HTTPException(403,"Нет доступа к сообщению")
+    return row
+
+@app.patch("/api/messages/{message_id}")
+async def edit_message(message_id:int,d:EditMessage,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        row=accessible_message(c,message_id,u)
+        if row["sender"]!=u: raise HTTPException(403,"Можно редактировать только свои сообщения")
+        c.execute("UPDATE messages SET body=? WHERE id=?",(d.body.strip(),message_id))
+        updated=dict(c.execute("SELECT id,sender,recipient,group_id,body,created_at,attachment_id,encrypted FROM messages WHERE id=?",(message_id,)).fetchone())
+        targets=[row["sender"],row["recipient"]] if row["group_id"] is None else [x["username"] for x in c.execute("SELECT username FROM group_members WHERE group_id=?",(row["group_id"],)).fetchall()]
+    for target in set(x for x in targets if x): await notify(target,{"type":"message_edited","message":updated})
+    return {"message":updated}
+
+@app.delete("/api/messages/{message_id}")
+async def delete_message(message_id:int,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        row=accessible_message(c,message_id,u)
+        if row["sender"]!=u: raise HTTPException(403,"Можно удалять только свои сообщения")
+        targets=[row["sender"],row["recipient"]] if row["group_id"] is None else [x["username"] for x in c.execute("SELECT username FROM group_members WHERE group_id=?",(row["group_id"],)).fetchall()]
+        c.execute("DELETE FROM messages WHERE id=?",(message_id,))
+    for target in set(x for x in targets if x): await notify(target,{"type":"message_deleted","message_id":message_id})
+    return {"ok":True}
+
+@app.post("/api/messages/{message_id}/reactions")
+async def react_message(message_id:int,d:ReactionIn,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization); reaction=d.reaction.strip()
+    if not reaction or len(reaction)>16: raise HTTPException(422,"Некорректная реакция")
+    with db() as c:
+        row=accessible_message(c,message_id,u)
+        if row["group_id"] is None:
+            other=row["recipient"] if row["sender"]==u else row["sender"]
+            if not other: raise HTTPException(400,"Некорректный чат")
+            blocked=c.execute("SELECT 1 FROM blocked_users WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)",(u,other,other,u)).fetchone()
+            if blocked: raise HTTPException(403,"Взаимодействие недоступно")
+        c.execute("INSERT OR IGNORE INTO message_reactions VALUES(?,?,?,?)",(message_id,u,reaction,now()))
+        reactions=[dict(x) for x in c.execute("SELECT username,reaction FROM message_reactions WHERE message_id=? ORDER BY created_at",(message_id,)).fetchall()]
+    return {"message_id":message_id,"reactions":reactions}
+
+@app.delete("/api/messages/{message_id}/reactions")
+def unreact_message(message_id:int,reaction:str,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        accessible_message(c,message_id,u)
+        c.execute("DELETE FROM message_reactions WHERE message_id=? AND username=? AND reaction=?",(message_id,u,reaction))
+        reactions=[dict(x) for x in c.execute("SELECT username,reaction FROM message_reactions WHERE message_id=? ORDER BY created_at",(message_id,)).fetchall()]
+    return {"message_id":message_id,"reactions":reactions}
+
+@app.post("/api/messages/{message_id}/read")
+async def mark_read(message_id:int,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        row=accessible_message(c,message_id,u)
+        if row["sender"]==u: return {"ok":True,"read_at":None}
+        stamp=now()
+        c.execute("INSERT INTO message_receipts(message_id,username,delivered_at,read_at) VALUES(?,?,?,?) ON CONFLICT(message_id,username) DO UPDATE SET delivered_at=COALESCE(message_receipts.delivered_at,excluded.delivered_at),read_at=excluded.read_at",(message_id,u,stamp,stamp))
+        sender=row["sender"]
+    await notify(sender,{"type":"message_read","message_id":message_id,"username":u,"read_at":stamp})
+    return {"ok":True,"read_at":stamp}
+
+@app.get("/api/messages/{message_id}/reactions")
+def list_reactions(message_id:int,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        accessible_message(c,message_id,u)
+        rows=[dict(x) for x in c.execute("SELECT username,reaction FROM message_reactions WHERE message_id=? ORDER BY created_at",(message_id,)).fetchall()]
+    return {"reactions":rows}
+
+@app.get("/api/blocks")
+def list_blocks(authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c: rows=[dict(x) for x in c.execute("SELECT blocked,created_at FROM blocked_users WHERE blocker=? ORDER BY created_at DESC",(u,)).fetchall()]
+    return {"blocks":rows}
+
+@app.post("/api/blocks")
+def block_user(d:BlockIn,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    if u.casefold()==d.username.casefold(): raise HTTPException(400,"Нельзя заблокировать себя")
+    with db() as c:
+        target=c.execute("SELECT username FROM users WHERE username=?",(d.username,)).fetchone()
+        if not target: raise HTTPException(404,"Пользователь не найден")
+        c.execute("INSERT OR IGNORE INTO blocked_users VALUES(?,?,?)",(u,target["username"],now()))
+    return {"ok":True,"blocked":target["username"]}
+
+@app.delete("/api/blocks/{username}")
+def unblock_user(username:str,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:c.execute("DELETE FROM blocked_users WHERE blocker=? AND blocked=?",(u,username))
+    return {"ok":True}
+
+@app.get("/api/pinned-messages")
+def list_pinned(authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        rows=[dict(x) for x in c.execute("""SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id FROM pinned_messages p JOIN messages m ON m.id=p.message_id WHERE p.username=? ORDER BY p.created_at DESC""",(u,)).fetchall()]
+    return {"messages":rows}
+
+@app.post("/api/messages/{message_id}/pin")
+def pin_message(message_id:int,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        accessible_message(c,message_id,u)
+        c.execute("INSERT OR IGNORE INTO pinned_messages VALUES(?,?,?)",(u,message_id,now()))
+    return {"ok":True}
+
+@app.delete("/api/messages/{message_id}/pin")
+def unpin_message(message_id:int,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        accessible_message(c,message_id,u)
+        c.execute("DELETE FROM pinned_messages WHERE username=? AND message_id=?",(u,message_id))
+    return {"ok":True}
+
 @app.websocket("/ws")
 async def ws_endpoint(ws:WebSocket,token:str=""):
     u=user_token(token)
