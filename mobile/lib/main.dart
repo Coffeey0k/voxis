@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:file_picker/file_picker.dart';
 
 void main() => runApp(const VoxisApp());
 
@@ -110,6 +111,10 @@ class _VoxisHomeState extends State<VoxisHome> {
   String _status = 'Not connected';
   List<Map<String, dynamic>> _users = [];
   List<Map<String, dynamic>> _messages = [];
+  String _displayName = '';
+  String _bio = '';
+  String? _avatarUrl;
+  bool _uploading = false;
   final ScrollController _chatScroll = ScrollController();
   Timer? _pollTimer;
 
@@ -312,6 +317,107 @@ class _VoxisHomeState extends State<VoxisHome> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _openProfileSettings() async {
+    if (_token == null) return;
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/api/me'), headers: _headers).timeout(const Duration(seconds: 15));
+      if (response.statusCode < 200 || response.statusCode >= 300) throw Exception(_apiError(response));
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _displayName = data['display_name']?.toString() ?? _myUsername ?? '';
+        _bio = data['bio']?.toString() ?? '';
+        _avatarUrl = data['avatar_url']?.toString();
+      });
+      final nameController = TextEditingController(text: _displayName);
+      final bioController = TextEditingController(text: _bio);
+      final saved = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Profile & settings'),
+          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            CircleAvatar(radius: 34, child: Text((_displayName.isEmpty ? _myUsername ?? '?' : _displayName)[0].toUpperCase(), style: const TextStyle(fontSize: 24))),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(onPressed: () async {
+              final picked = await FilePicker.platform.pickFiles(type: FileType.image, withData: true);
+              if (picked == null || picked.files.single.bytes == null) return;
+              final file = picked.files.single;
+              final req = http.MultipartRequest('POST', Uri.parse('$_baseUrl/api/avatar'))
+                ..headers.addAll({'Authorization': 'Bearer $_token'})
+                ..files.add(http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name, contentType: _mediaType(file.name)));
+              final streamed = await req.send().timeout(const Duration(seconds: 30));
+              final res = await http.Response.fromStream(streamed);
+              if (res.statusCode < 200 || res.statusCode >= 300) {
+                if (mounted) _showError(Exception(_apiError(res)));
+              } else if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Avatar updated')));
+              }
+            }, icon: const Icon(Icons.photo_camera_outlined), label: const Text('Change avatar')),
+            const SizedBox(height: 12),
+            TextField(controller: nameController, maxLength: 60, decoration: const InputDecoration(labelText: 'Display name')),
+            const SizedBox(height: 8),
+            TextField(controller: bioController, maxLength: 300, maxLines: 3, decoration: const InputDecoration(labelText: 'About me')),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Dark theme'),
+              value: widget.isDark,
+              onChanged: (_) => widget.onToggleTheme(),
+            ),
+            Text('Account: @$_myUsername', style: Theme.of(context).textTheme.bodySmall),
+            Text('Server: $_baseUrl', style: Theme.of(context).textTheme.bodySmall),
+          ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save profile')),
+          ],
+        ),
+      );
+      if (saved == true) {
+        final res = await http.patch(Uri.parse('$_baseUrl/api/profile'), headers: _headers,
+          body: jsonEncode({'display_name': nameController.text.trim(), 'bio': bioController.text.trim()})).timeout(const Duration(seconds: 15));
+        if (res.statusCode < 200 || res.statusCode >= 300) throw Exception(_apiError(res));
+        if (mounted) setState(() { _displayName = nameController.text.trim(); _bio = bioController.text.trim(); });
+        await _loadUsers();
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile saved')));
+      }
+      nameController.dispose();
+      bioController.dispose();
+    } catch (error) { _showError(error); }
+  }
+
+  MediaType _mediaType(String name) {
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.png')) return MediaType('image', 'png');
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return MediaType('image', 'jpeg');
+    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
+    if (lower.endsWith('.pdf')) return MediaType('application', 'pdf');
+    return MediaType('application', 'octet-stream');
+  }
+
+  Future<void> _pickAndSendFile() async {
+    if (_token == null || _peer == null || _uploading || _busy) return;
+    final picked = await FilePicker.platform.pickFiles(withData: true);
+    if (picked == null || picked.files.single.bytes == null) return;
+    final file = picked.files.single;
+    if (file.size > 20 * 1024 * 1024) { _showError(Exception('Maximum file size is 20 MB')); return; }
+    setState(() => _uploading = true);
+    try {
+      final req = http.MultipartRequest('POST', Uri.parse('$_baseUrl/api/attachments'))
+        ..headers.addAll({'Authorization': 'Bearer $_token'})
+        ..files.add(http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name, contentType: _mediaType(file.name)));
+      final streamed = await req.send().timeout(const Duration(seconds: 60));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode < 200 || response.statusCode >= 300) throw Exception(_apiError(response));
+      final uploaded = jsonDecode(response.body) as Map<String, dynamic>;
+      final sent = await http.post(Uri.parse('$_baseUrl/api/messages'), headers: _headers,
+        body: jsonEncode({'recipient': _peer, 'body': '', 'attachment_id': uploaded['id']})).timeout(const Duration(seconds: 30));
+      if (sent.statusCode < 200 || sent.statusCode >= 300) throw Exception(_apiError(sent));
+      await _loadHistory();
+    } catch (error) { _showError(error); }
+    finally { if (mounted) setState(() => _uploading = false); }
   }
 
   Future<void> _logout() async {
@@ -744,7 +850,7 @@ class _VoxisHomeState extends State<VoxisHome> {
                     icon: _busy
                         ? const SizedBox(width: 18, height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.send_rounded),
+                        : _uploading ? const Icon(Icons.attach_file_rounded) : const Icon(Icons.send_rounded),
                   ),
                 ),
               ],
