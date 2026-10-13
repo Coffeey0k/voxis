@@ -1,4 +1,4 @@
-import hashlib, hmac, os, secrets, sqlite3, threading
+import asyncio, hashlib, hmac, os, secrets, sqlite3, threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -13,6 +13,8 @@ UPLOADS.mkdir(parents=True, exist_ok=True)
 app=FastAPI(title="Voxis API", version="0.2.0")
 live: dict[str,set[WebSocket]]={}
 live_lock=threading.Lock()
+_firebase_app=None
+_firebase_lock=threading.Lock()
 def now(): return datetime.now(timezone.utc).isoformat(timespec="seconds")
 def db():
     c=sqlite3.connect(DB, timeout=20); c.row_factory=sqlite3.Row
@@ -109,6 +111,56 @@ async def notify(u,payload):
         try: await ws.send_json(payload)
         except Exception:
             with live_lock: live.get(u,set()).discard(ws)
+
+def push_to_user(username, event_type, data):
+    """Best-effort FCM HTTP v1 push. Notification payload never includes message text."""
+    global _firebase_app
+    if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+        return {"sent": 0, "configured": False}
+    with db() as c:
+        tokens=[r["push_token"] for r in c.execute(
+            "SELECT push_token FROM devices WHERE username=? AND push_token IS NOT NULL AND push_token<>''",
+            (username,)).fetchall()]
+    if not tokens:
+        return {"sent": 0, "configured": True}
+    try:
+        import firebase_admin
+        from firebase_admin import messaging
+        with _firebase_lock:
+            if _firebase_app is None:
+                try:
+                    _firebase_app=firebase_admin.get_app()
+                except ValueError:
+                    _firebase_app=firebase_admin.initialize_app()
+        message=messaging.MulticastMessage(
+            tokens=tokens[:500],
+            notification=messaging.Notification(title="Voxis", body="Новое сообщение" if event_type=="message" else "Новое событие"),
+            data={"type":str(event_type), **{str(k):str(v) for k,v in data.items()}},
+            android=messaging.AndroidConfig(priority="high"),
+            apns=messaging.APNSConfig(headers={"apns-priority":"10"}),
+        )
+        result=messaging.send_each_for_multicast(message, app=_firebase_app)
+        invalid=[]
+        for token, response in zip(tokens[:500], result.responses):
+            code=getattr(response.exception, "code", None) if response.exception else None
+            if not response.success and code in {"registration-token-not-registered", "invalid-argument"}:
+                invalid.append(token)
+        if invalid:
+            with db() as c:
+                c.executemany("UPDATE devices SET push_token=NULL WHERE push_token=?", [(t,) for t in invalid])
+        return {"sent":result.success_count, "failed":result.failure_count, "configured":True}
+    except Exception:
+        # Provider outages must never break REST/WebSocket message delivery.
+        return {"sent":0, "configured":True, "error":"provider_unavailable"}
+
+async def notify_message_targets(targets, msg):
+    unique=set(targets)
+    for target in unique:
+        await notify(target, {"type":"message", "message":msg})
+    for target in unique:
+        if target != msg["sender"]:
+            await asyncio.to_thread(push_to_user, target, "message",
+                                    {"message_id":msg["id"], "sender":msg["sender"]})
 
 @app.get("/health")
 def health(): return {"ok":True,"app":"Voxis","version":"0.2.0"}
@@ -284,7 +336,7 @@ async def send(d:MessageIn,authorization:Optional[str]=Header(default=None)):
         cur=c.execute("INSERT INTO messages(sender,recipient,group_id,body,created_at,attachment_id,encrypted) VALUES(?,?,?,?,?,?,?)",(u,d.recipient,d.group_id,body,now(),d.attachment_id,int(d.encrypted)))
         msg={"id":cur.lastrowid,"sender":u,"recipient":d.recipient,"group_id":d.group_id,"body":body,"created_at":now(),"attachment_id":d.attachment_id,"encrypted":d.encrypted}
         targets=[u,d.recipient] if d.recipient else [r["username"] for r in c.execute("SELECT username FROM group_members WHERE group_id=?",(d.group_id,)).fetchall()]
-    for target in set(targets):await notify(target,{"type":"message","message":msg})
+    await notify_message_targets(targets,msg)
     return {"message":msg}
 def accessible_message(c, message_id, username):
     row=c.execute("SELECT * FROM messages WHERE id=?",(message_id,)).fetchone()
