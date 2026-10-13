@@ -87,3 +87,22 @@ The Android app now uses the API for registration/login, user listing, direct-me
 The local server is intended for development on a trusted home network only. The Android debug build permits plain HTTP for this test setup. Do not expose port 8000 to the public internet or use real/private conversations over plain HTTP. For use outside the home, first set up HTTPS/WSS, secure deployment, backups, rate limiting, and operational monitoring.
 
 The API's `encrypted` field is metadata, not end-to-end encryption. Do not describe Voxis as E2EE until client-side cryptography and key verification are implemented and audited. Voice/video call signaling is not a complete calling system.
+
+## Push notifications (FCM for Android, APNs-compatible payload)
+
+The API now sends best-effort Firebase Cloud Messaging notifications when a direct or group message is sent. The push contains only a generic notification and message metadata; it never includes message text or attachment names. Delivery failures do not fail message sending. APNs headers are included for Firebase's Apple-device routing, but native APNs delivery still requires an Apple app configuration.
+
+1. Create/configure a Firebase project and register the Android application using the same application ID as the mobile app.
+2. Enable Firebase Cloud Messaging and create a service account with permission to send messages.
+3. Put the service-account JSON in a private, persistent server path. Never commit it to Git.
+4. Install the updated dependencies and set the environment variable before starting Uvicorn:
+
+```bash
+python -m pip install -r requirements-server.txt
+export GOOGLE_APPLICATION_CREDENTIALS=/etc/voxis/firebase-service-account.json
+uvicorn server:app --host 127.0.0.1 --port 8000
+```
+
+5. The client must obtain an FCM registration token and send it to `POST /api/devices` with its stable device ID, platform and `push_token`. The token is stored per account/device and can be revoked by deleting that device. Do not share service-account credentials with clients.
+
+Without `GOOGLE_APPLICATION_CREDENTIALS`, push is disabled and message delivery continues normally. The mobile client still needs Firebase SDK initialization, runtime notification permission handling, token refresh handling, and calling `POST /api/devices`; backend support alone does not make push notifications appear on a device.
