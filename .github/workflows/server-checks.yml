@@ -1,0 +1,39 @@
+name: Validate Voxis server and desktop
+on:
+  push:
+    paths:
+      - 'server.py'
+      - 'voxis_client/**'
+      - 'requirements-server.txt'
+      - '.github/workflows/server-checks.yml'
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install server dependencies
+        run: pip install -r requirements-server.txt
+      - name: Compile server and desktop client
+        run: python -m py_compile server.py voxis_client/main.py
+      - name: Import API and verify routes
+        run: |
+          python - <<'PY'
+          import server
+          paths = {route.path for route in server.app.routes}
+          required = {
+              '/health',
+              '/api/search/messages',
+              '/api/blocks',
+              '/api/messages/{message_id}',
+              '/api/messages/{message_id}/reactions',
+              '/api/messages/{message_id}/read',
+          }
+          missing = required - paths
+          if missing:
+              raise SystemExit(f'Missing API routes: {sorted(missing)}')
+          print(f'API route smoke test passed ({len(paths)} routes)')
+          PY
