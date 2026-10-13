@@ -42,6 +42,7 @@ jobs:
           flutter pub add http
           flutter pub add web_socket_channel
           flutter pub add file_picker
+          flutter pub add http_parser
           mkdir -p android/app/src/debug
           cat > android/app/src/debug/AndroidManifest.xml <<'MANIFEST'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
