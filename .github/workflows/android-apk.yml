@@ -50,10 +50,41 @@ jobs:
             <application android:usesCleartextTraffic="true" />
           </manifest>
           MANIFEST
-      - name: Build installable debug APK
+      - name: Install Android NDK with retry
+        shell: bash
         run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          NDK_VERSION="28.2.13676358"
+          for attempt in 1 2 3; do
+            echo "Installing Android NDK $NDK_VERSION (attempt $attempt/3)"
+            if yes | "$SDKMANAGER" --install "ndk;$NDK_VERSION"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Could not install Android NDK after 3 attempts"
+              exit 1
+            fi
+            rm -rf "$ANDROID_HOME/ndk/$NDK_VERSION"
+            sleep 10
+          done
+      - name: Build installable debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
           cd mobile_app
-          flutter build apk --debug
+          for attempt in 1 2 3; do
+            echo "Building APK (attempt $attempt/3)"
+            if flutter build apk --debug; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::APK build failed after 3 attempts"
+              exit 1
+            fi
+            rm -rf "$ANDROID_HOME/ndk/28.2.13676358"
+            sleep 10
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: voxis-android-debug-apk
