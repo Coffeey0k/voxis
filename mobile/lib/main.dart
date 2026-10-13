@@ -36,7 +36,7 @@ class _VoxisAppState extends State<VoxisApp> {
         elevation: 0,
         centerTitle: false,
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: dark ? const Color(0xE61A2340) : const Color(0xE6FFFFFF),
         elevation: dark ? 0 : 2,
         shape: RoundedRectangleBorder(
