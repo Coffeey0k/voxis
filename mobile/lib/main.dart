@@ -977,20 +977,20 @@ class _VoxisHomeState extends State<VoxisHome> {
                   if (value == 'block') _blockCurrentPeer();
                   if (value == 'logout') _logout();
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'users', child: ListTile(
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'users', child: ListTile(
                     leading: Icon(Icons.people_outline), title: Text('Refresh contacts'),
                     contentPadding: EdgeInsets.zero, dense: true)),
-                  PopupMenuItem(value: 'profile', child: ListTile(
+                  const PopupMenuItem(value: 'profile', child: ListTile(
                     leading: Icon(Icons.account_circle_outlined), title: Text('Profile & settings'),
                     contentPadding: EdgeInsets.zero, dense: true)),
-                  PopupMenuItem(value: 'search', child: ListTile(
+                  const PopupMenuItem(value: 'search', child: ListTile(
                     leading: Icon(Icons.search_rounded), title: Text('Search messages'),
                     contentPadding: EdgeInsets.zero, dense: true)),
                   PopupMenuItem(value: 'block', enabled: _peer != null, child: ListTile(
                     leading: Icon(Icons.block_rounded), title: Text('Block this contact'),
                     contentPadding: EdgeInsets.zero, dense: true)),
-                  PopupMenuItem(value: 'logout', child: ListTile(
+                  const PopupMenuItem(value: 'logout', child: ListTile(
                     leading: Icon(Icons.logout_rounded), title: Text('Log out'),
                     contentPadding: EdgeInsets.zero, dense: true)),
                 ],
