@@ -403,7 +403,7 @@ class _VoxisHomeState extends State<VoxisHome> {
     final file = await FilePicker.pickFile();
     if (file == null) return;
     final fileSize = file.lengthSync() ?? await file.length();
-    if (fileSize > 20 * 1024 * 1024) { _showError(Exception('Maximum file size is 20 MB')); return; }
+    if ((fileSize ?? 0) > 20 * 1024 * 1024) { _showError(Exception('Maximum file size is 20 MB')); return; }
     final bytes = await file.readAsBytes();
     setState(() => _uploading = true);
     try {
