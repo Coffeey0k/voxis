@@ -8,14 +8,15 @@
 - Accounts, direct text messages, basic group chat, profile fields
 - Avatar upload API and attachment upload/download API
 - Device registry/list/revoke API
-- WebSocket message delivery and a minimal call-signaling event hook
+- WebSocket message delivery, presence/typing events, read receipts and a minimal call-signaling event hook
+- Optional server-side Firebase Cloud Messaging push dispatch (FCM HTTP v1) with generic, privacy-preserving notification text; requires service-account configuration and client token registration
 - Flutter starter Android client for login, user/group selection and text messages
 - API integration test, PyInstaller desktop build script, and GitHub Actions workflow that builds an installable debug APK artifact
 
 ## Important unfinished work
 - **E2EE is not implemented.** Message bodies are stored as plaintext. The `encrypted` field is only metadata.
 - **Voice/video calls are not implemented.** Signaling hooks do not transmit media. A real implementation needs WebRTC, STUN/TURN, call-state handling, device permissions, and likely an SFU for group calls.
-- **Push notifications are not implemented.** Device records can hold a push token, but no FCM worker or notification registration UI exists.
+- **Push notifications are only partially integrated.** The server can dispatch FCM notifications when configured, but the mobile client still needs Firebase SDK initialization, runtime permission/token handling, and registration via `POST /api/devices`. Real delivery has not been verified without Firebase credentials.
 - Android app currently has a starter UI; it does not yet include all profile/avatar/file/device-management screens.
 - The desktop upload flow is present, but a polished attachment download/open UI is unfinished.
 - WebSocket auth uses a token in the query string. For production, use TLS and short-lived, single-use WebSocket tickets.
