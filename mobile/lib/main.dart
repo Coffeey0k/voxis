@@ -474,6 +474,77 @@ class _VoxisHomeState extends State<VoxisHome> {
     finally { if (mounted) setState(() => _uploading = false); }
   }
 
+  Future<void> _messageActions(Map<String, dynamic> message, bool mine) async {
+    final id = message['id'];
+    if (id == null || _token == null) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.add_reaction_outlined), title: const Text('React'), onTap: () => Navigator.pop(ctx, 'react')),
+          ListTile(leading: const Icon(Icons.push_pin_outlined), title: const Text('Pin for me'), onTap: () => Navigator.pop(ctx, 'pin')),
+          if (mine) ListTile(leading: const Icon(Icons.edit_outlined), title: const Text('Edit message'), onTap: () => Navigator.pop(ctx, 'edit')),
+          if (mine) ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text('Delete message'), onTap: () => Navigator.pop(ctx, 'delete')),
+        ]),
+      ),
+    );
+    if (action == null) return;
+    try {
+      http.Response response;
+      if (action == 'react') {
+        final emoji = await showDialog<String>(
+          context: context,
+          builder: (ctx) => SimpleDialog(
+            title: const Text('Choose reaction'),
+            children: ['👍','❤️','😂','😮','😢','🔥'].map((emoji) => SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, emoji),
+              child: Text(emoji, style: const TextStyle(fontSize: 28)),
+            )).toList(),
+          ),
+        );
+        if (emoji == null) return;
+        response = await http.post(Uri.parse('$_baseUrl/api/messages/$id/reactions'), headers: _headers, body: jsonEncode({'reaction': emoji}));
+      } else if (action == 'pin') {
+        response = await http.post(Uri.parse('$_baseUrl/api/messages/$id/pin'), headers: _headers);
+      } else if (action == 'edit') {
+        final controller = TextEditingController(text: message['body']?.toString() ?? '');
+        final edited = await showDialog<String>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Edit message'),
+            content: TextField(controller: controller, autofocus: true, maxLength: 4000, minLines: 1, maxLines: 5),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Save')),
+            ],
+          ),
+        );
+        controller.dispose();
+        if (edited == null || edited.isEmpty) return;
+        response = await http.patch(Uri.parse('$_baseUrl/api/messages/$id'), headers: _headers, body: jsonEncode({'body': edited}));
+      } else {
+        final confirm = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Delete message?'),
+            content: const Text('This will remove the message for everyone in the conversation.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+            ],
+          ),
+        );
+        if (confirm != true) return;
+        response = await http.delete(Uri.parse('$_baseUrl/api/messages/$id'), headers: _headers);
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) throw Exception(_apiError(response));
+      await _loadHistory();
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
   Future<void> _searchMessages() async {
     if (_token == null) return;
     final controller = TextEditingController();
@@ -933,7 +1004,9 @@ class _VoxisHomeState extends State<VoxisHome> {
                             const SizedBox(width: 7),
                           ] else if (!mine) const SizedBox(width: 21),
                           Flexible(
-                            child: Container(
+                            child: GestureDetector(
+                              onLongPress: () => _messageActions(item, mine),
+                              child: Container(
                               constraints: const BoxConstraints(maxWidth: 340),
                               padding: const EdgeInsets.fromLTRB(13, 9, 12, 7),
                               decoration: BoxDecoration(
@@ -1006,6 +1079,7 @@ class _VoxisHomeState extends State<VoxisHome> {
                                   ),
                                 ],
                               ),
+                            ),
                             ),
                           ),
                           if (mine) const SizedBox(width: 4),
