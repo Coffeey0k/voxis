@@ -256,7 +256,7 @@ class _VoxisHomeState extends State<VoxisHome> {
     try {
       await http.post(Uri.parse('$_baseUrl/api/devices'), headers: _headers,
         body: jsonEncode({
-          'id': 'android-${_myUsername!.toLowerCase()}',
+          'id': await _deviceIdFor(_myUsername!),
           'platform': 'android',
           'push_token': pushToken,
         })).timeout(const Duration(seconds: 12));
@@ -282,6 +282,15 @@ class _VoxisHomeState extends State<VoxisHome> {
     return 'HTTP ${response.statusCode}: ${response.reasonPhrase ?? 'request failed'}';
   }
 
+  Future<String> _deviceIdFor(String username) async {
+    var id = await _secureStorage.read(key: 'device_id');
+    if (id == null || id.length < 3) {
+      id = 'android-${username.toLowerCase()}-${DateTime.now().microsecondsSinceEpoch}';
+      await _secureStorage.write(key: 'device_id', value: id);
+    }
+    return id;
+  }
+
   Future<void> _authenticate() async {
     FocusScope.of(context).unfocus();
     final name = _username.text.trim();
@@ -304,6 +313,7 @@ class _VoxisHomeState extends State<VoxisHome> {
       _status = 'Connecting…';
     });
     try {
+      final deviceId = await _deviceIdFor(name);
       final response = await http
           .post(
             Uri.parse('$_baseUrl/api/${_registerMode ? 'register' : 'login'}'),
@@ -311,7 +321,7 @@ class _VoxisHomeState extends State<VoxisHome> {
             body: jsonEncode({
               'username': name,
               'password': password,
-              'device_id': 'android-${name.toLowerCase()}',
+              'device_id': deviceId,
               'platform': 'android',
             }),
           )
