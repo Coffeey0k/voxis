@@ -222,6 +222,19 @@ async def group_add(gid:int,d:GroupIn,authorization:Optional[str]=Header(default
             c.execute("INSERT OR IGNORE INTO group_members VALUES(?,?,?,?)",(gid,m,"member",now()))
     for m in d.members:await notify(m,{"type":"group_updated","group_id":gid})
     return {"ok":True}
+@app.get("/api/search/messages")
+def search_messages(q:str,authorization:Optional[str]=Header(default=None),limit:int=100):
+    u=me_user(authorization); query=q.strip()
+    if not query: return {"messages":[]}
+    limit=max(1,min(limit,200))
+    with db() as c:
+        rows=c.execute("""SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,a.original_name AS attachment_name
+          FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id
+          WHERE m.body LIKE ? AND ((m.group_id IS NULL AND (m.sender=? OR m.recipient=?))
+          OR (m.group_id IS NOT NULL AND EXISTS(SELECT 1 FROM group_members gm WHERE gm.group_id=m.group_id AND gm.username=?)))
+          ORDER BY m.id DESC LIMIT ?""",("%"+query.replace("%","\\%").replace("_","\\_")+"%",u,u,u,limit)).fetchall()
+    return {"messages":[dict(r) for r in rows]}
+
 @app.get("/api/messages/{peer}")
 def direct_history(peer:str,authorization:Optional[str]=Header(default=None),limit:int=100):
     u=me_user(authorization);limit=max(1,min(limit,200))
@@ -262,6 +275,8 @@ async def send(d:MessageIn,authorization:Optional[str]=Header(default=None)):
     with db() as c:
         if d.recipient:
             if not c.execute("SELECT 1 FROM users WHERE username=?",(d.recipient,)).fetchone():raise HTTPException(404,"Получатель не найден")
+            if c.execute("SELECT 1 FROM blocked_users WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)",(u,d.recipient,d.recipient,u)).fetchone():
+                raise HTTPException(403,"Отправка сообщений этому пользователю недоступна")
         else:member(c,d.group_id,u)
         if d.attachment_id:
             a=c.execute("SELECT owner FROM attachments WHERE id=?",(d.attachment_id,)).fetchone()
