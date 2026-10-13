@@ -23,6 +23,8 @@ jobs:
       - name: Compile server and desktop client
         run: python -m py_compile server.py voxis_client/main.py
       - name: Run API integration tests
+        env:
+          PYTHONPATH: .
         run: pytest -q
       - name: Import API and verify routes
         run: |
