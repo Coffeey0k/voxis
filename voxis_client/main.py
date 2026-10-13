@@ -74,6 +74,12 @@ class VoxisWindow(QMainWindow):
         self.heading = QLabel("Your conversations")
         self.heading.setStyleSheet("font-size: 22px; font-weight: 700; padding: 8px;")
         header.addWidget(self.heading, 1)
+        self.message_search = QPushButton("Search messages")
+        self.message_search.clicked.connect(self.search_messages)
+        header.addWidget(self.message_search)
+        self.block_button = QPushButton("Block contact")
+        self.block_button.clicked.connect(self.block_peer)
+        header.addWidget(self.block_button)
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh_all)
         header.addWidget(refresh)
@@ -243,6 +249,52 @@ class VoxisWindow(QMainWindow):
             bar.setValue(bar.maximum())
         except requests.RequestException:
             pass
+
+    def search_messages(self):
+        if not self.token:
+            self.notify_error("Log in first.")
+            return
+        query, ok = QInputDialog.getText(self, "Search Voxis", "Search messages:")
+        if not ok or not query.strip():
+            return
+        try:
+            r = requests.get(self.base + "/api/search/messages",
+                headers=self.headers(), params={"q": query.strip()}, timeout=15)
+            if not r.ok:
+                raise RuntimeError(self.request_error(r))
+            messages = r.json().get("messages", [])
+            if not messages:
+                QMessageBox.information(self, "Search", "No matching messages found.")
+                return
+            lines = []
+            for message in messages[:100]:
+                sender = message.get("sender", "?")
+                body = message.get("body") or message.get("attachment_name") or "Attachment"
+                lines.append(f"@{sender} · {str(message.get('created_at', ''))[:16]}\n{body}")
+            QMessageBox.information(self, f"Search results ({len(messages)})", "\n\n".join(lines))
+        except Exception as error:
+            self.notify_error(error)
+
+    def block_peer(self):
+        if not self.token or not self.peer:
+            self.notify_error("Select a contact first.")
+            return
+        answer = QMessageBox.question(self, "Block contact",
+            f"Block @{self.peer}? They will no longer be able to exchange messages with you.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            r = requests.post(self.base + "/api/blocks", headers=self.headers(),
+                json={"username": self.peer}, timeout=15)
+            if not r.ok:
+                raise RuntimeError(self.request_error(r))
+            blocked = self.peer
+            self.peer = None
+            self.history.clear()
+            self.heading.setText("Your conversations")
+            QMessageBox.information(self, "Voxis", f"@{blocked} blocked.")
+        except Exception as error:
+            self.notify_error(error)
 
     def send_message(self):
         body = self.message.text().strip()
