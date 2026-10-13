@@ -342,12 +342,12 @@ class _VoxisHomeState extends State<VoxisHome> {
             CircleAvatar(radius: 34, child: Text((_displayName.isEmpty ? _myUsername ?? '?' : _displayName)[0].toUpperCase(), style: const TextStyle(fontSize: 24))),
             const SizedBox(height: 8),
             OutlinedButton.icon(onPressed: () async {
-              final picked = await FilePicker.pickFiles(type: FileType.image, withData: true);
-              if (picked == null || picked.files.single.bytes == null) return;
-              final file = picked.files.single;
+              final file = await FilePicker.pickFile(type: FileType.image);
+              if (file == null) return;
+              final bytes = await file.readAsBytes();
               final req = http.MultipartRequest('POST', Uri.parse('$_baseUrl/api/avatar'))
                 ..headers.addAll({'Authorization': 'Bearer $_token'})
-                ..files.add(http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name, contentType: _mediaType(file.name)));
+                ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: file.name, contentType: _mediaType(file.name)));
               final streamed = await req.send().timeout(const Duration(seconds: 30));
               final res = await http.Response.fromStream(streamed);
               if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -400,15 +400,16 @@ class _VoxisHomeState extends State<VoxisHome> {
 
   Future<void> _pickAndSendFile() async {
     if (_token == null || _peer == null || _uploading || _busy) return;
-    final picked = await FilePicker.pickFiles(withData: true);
-    if (picked == null || picked.files.single.bytes == null) return;
-    final file = picked.files.single;
-    if (file.size > 20 * 1024 * 1024) { _showError(Exception('Maximum file size is 20 MB')); return; }
+    final file = await FilePicker.pickFile();
+    if (file == null) return;
+    final fileSize = file.lengthSync() ?? await file.length();
+    if (fileSize > 20 * 1024 * 1024) { _showError(Exception('Maximum file size is 20 MB')); return; }
+    final bytes = await file.readAsBytes();
     setState(() => _uploading = true);
     try {
       final req = http.MultipartRequest('POST', Uri.parse('$_baseUrl/api/attachments'))
         ..headers.addAll({'Authorization': 'Bearer $_token'})
-        ..files.add(http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name, contentType: _mediaType(file.name)));
+        ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: file.name, contentType: _mediaType(file.name)));
       final streamed = await req.send().timeout(const Duration(seconds: 60));
       final response = await http.Response.fromStream(streamed);
       if (response.statusCode < 200 || response.statusCode >= 300) throw Exception(_apiError(response));
