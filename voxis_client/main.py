@@ -53,6 +53,10 @@ class VoxisWindow(QMainWindow):
         self.status.setWordWrap(True)
         sidebar.addWidget(self.status)
         sidebar.addWidget(QLabel("CHATS"))
+        self.chat_search = QLineEdit()
+        self.chat_search.setPlaceholderText("Search contacts…")
+        self.chat_search.textChanged.connect(self.filter_chats)
+        sidebar.addWidget(self.chat_search)
         self.chats = QListWidget()
         self.chats.currentTextChanged.connect(self.select_peer)
         sidebar.addWidget(self.chats, 1)
@@ -148,6 +152,12 @@ class VoxisWindow(QMainWindow):
         except Exception as e:
             self.notify_error(e)
 
+    def filter_chats(self, text):
+        query = text.strip().casefold()
+        for i in range(self.chats.count()):
+            item = self.chats.item(i)
+            item.setHidden(query not in item.text().casefold())
+
     def refresh_all(self):
         if not self.token:
             return
@@ -167,6 +177,7 @@ class VoxisWindow(QMainWindow):
             elif self.chats.count():
                 self.chats.setCurrentRow(0)
             self.chats.blockSignals(False)
+            self.filter_chats(self.chat_search.text())
             self.load_profile()
             self.load_history()
         except Exception as e:
