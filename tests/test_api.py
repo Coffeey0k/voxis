@@ -72,3 +72,25 @@ def test_message_lifecycle_and_privacy(tmp_path, monkeypatch):
         deleted = client.delete(f"/api/messages/{message_id}", headers=ah)
         assert deleted.status_code == 200
         assert client.get(f"/api/messages/{message_id}/reactions", headers=bh).status_code == 404
+
+
+
+def test_push_delivery_is_best_effort_and_contains_no_message_body(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DB", tmp_path / "push.sqlite3")
+    monkeypatch.setattr(server, "UPLOADS", tmp_path / "uploads")
+    server.UPLOADS.mkdir(parents=True, exist_ok=True)
+    calls = []
+    monkeypatch.setattr(server, "push_to_user", lambda username, kind, data: calls.append((username, kind, data)) or {"sent": 1})
+
+    with TestClient(server.app) as client:
+        alice = register(client, "push_alice")
+        bob = register(client, "push_bob")
+        ah = {"Authorization": f"Bearer {alice}"}
+        sent = client.post("/api/messages", headers=ah, json={
+            "recipient": "push_bob", "body": "private text must not go to push"
+        })
+        assert sent.status_code == 200, sent.text
+        assert calls == [("push_bob", "message", {
+            "message_id": sent.json()["message"]["id"], "sender": "push_alice"
+        })]
+        assert "private text" not in repr(calls)
