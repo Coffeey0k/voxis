@@ -1,26 +1,69 @@
-# Voxis API deployment (prototype)
+# Voxis: local API on CachyOS + Android
 
-The Android APK is currently a UI demo. The server code in `server.py` implements an API, but it must be running at a reachable address before a phone can use it. The current Flutter screen does not yet call the API.
+This guide runs the API on your CachyOS computer and connects the Android debug APK to it over your home Wi-Fi.
 
-## Quick local smoke test (CachyOS/Linux)
+## 1. Start the API on CachyOS
+
+Open a terminal and run:
 
 ```bash
-sudo pacman -S --needed python python-pip
+sudo pacman -S --needed git python python-pip
 git clone https://github.com/Coffeey0k/voxis.git
 cd voxis
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-server.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements-server.txt
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
-On the same computer, open `http://127.0.0.1:8000/health`. From another device on the same Wi-Fi, use `http://<LAN-IP-OF-COMPUTER>:8000/health`. Find the LAN address with `ip -brief address`.
+Keep this terminal open while using Voxis. The first startup creates/updates the SQLite database. The API should print that it is running on port 8000.
 
-Do not expose port 8000 directly to the public internet. For remote use, deploy behind HTTPS/WSS using a reverse proxy or managed platform, and configure a persistent volume for the SQLite database and uploaded files.
+If you already cloned the repository earlier, don't clone it again. Instead run `cd /path/to/voxis`, then `git pull`, and continue from creating/activating the virtual environment.
 
-## API smoke test
+## 2. Verify the API on the computer
 
-Register a test account (password must be at least 10 characters):
+In a second terminal:
+
+```bash
+curl -i http://127.0.0.1:8000/health
+curl -s http://127.0.0.1:8000/api/meta
+```
+
+The health response should contain `"ok":true`. You can also open `http://127.0.0.1:8000/docs` in a browser on the computer.
+
+## 3. Find the computer's Wi-Fi IP
+
+Run:
+
+```bash
+ip -brief address
+```
+
+Find the active Wi-Fi interface (often named `wlan0`, `wlp...`) and its private IPv4 address, usually something like `192.168.1.25/24`. Do not use `127.0.0.1` on a physical phone: that points to the phone itself.
+
+If CachyOS firewall rules block local connections, allow TCP port 8000 only on your trusted home LAN using your firewall's normal configuration. Do not disable the firewall wholesale.
+
+## 4. Build the updated Android APK from GitHub
+
+The repository's GitHub Actions workflow starts when `mobile/**` or the Android workflow changes. Open:
+
+https://github.com/Coffeey0k/voxis/actions/workflows/android-apk.yml
+
+Open the newest successful **Build Voxis Android APK** run, download the `voxis-android-debug-apk` artifact, extract it, and install `app-debug.apk` on your phone. If the run is still in progress or failed, wait for/fix the run before installing. The APK is a debug build, not a Play Store release.
+
+## 5. Connect Android to the local API
+
+- Keep the computer and phone on the same trusted Wi-Fi network.
+- Open Voxis on the phone.
+- In **API server URL**, enter the computer's address, for example `http://192.168.1.25:8000` (replace the example with your actual IP).
+- Tap **Register**, choose a username of 3–24 characters using letters/numbers/dot/dash/underscore, and use a password of at least 10 characters.
+- To message someone, register a second account from another device (or log out and register a different username). Then select that person under **Conversation** and send a message.
+- To read the latest history, tap the refresh icon. Messages are saved by the API in the server's SQLite database.
+
+For the Android emulator running on the same computer, use `http://10.0.2.2:8000` instead of the LAN IP. A physical Android phone should use the computer's LAN IP.
+
+## 6. Quick API test without Android (optional)
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/register \
@@ -28,21 +71,19 @@ curl -X POST http://127.0.0.1:8000/api/register \
   -d '{"username":"demo_user","password":"change-this-password","device_id":"demo-device-01","platform":"linux"}'
 ```
 
-The response includes a bearer token. Use it for protected endpoints:
+Copy the returned token and replace `YOUR_TOKEN` here:
 
 ```bash
 curl http://127.0.0.1:8000/api/me -H 'Authorization: Bearer YOUR_TOKEN'
+curl http://127.0.0.1:8000/api/users -H 'Authorization: Bearer YOUR_TOKEN'
 ```
 
-## Important security and reliability work before real users
+Use a unique test username. The registration command returns HTTP 409 if that username already exists.
 
-- Use HTTPS/WSS and never transmit bearer tokens over plain internet HTTP.
-- Do not commit `voxis.sqlite3`, WAL/SHM files, tokens, or user uploads. If real user data has ever been committed, remove it from repository history and rotate any exposed credentials.
-- Add rate limits, account recovery, session expiry/revocation policy, upload scanning/limits, backups, and structured logging.
-- Implement actual client API/WebSocket integration and automated integration tests.
-- The `encrypted` message flag is metadata, not end-to-end encryption. Do not claim E2EE until client-side cryptography and key verification are implemented and audited.
-- Call signaling is not a complete voice/video calling system.
+## Current capabilities and limitations
 
-## Current status
+The Android app now uses the API for registration/login, user listing, direct-message history, and sending messages. Refresh users/history manually with the refresh controls. Real-time WebSocket updates, secure token persistence, groups, file attachments, push notifications, and calls are not yet wired into this Android screen.
 
-The Android screen and desktop screen are demos. The server API has registration/login, profiles, user listing, groups, message history, attachments and WebSocket notifications, but clients need to be integrated with those endpoints. An APK artifact proves only that the app built, not that end-to-end messaging works.
+The local server is intended for development on a trusted home network only. The Android debug build permits plain HTTP for this test setup. Do not expose port 8000 to the public internet or use real/private conversations over plain HTTP. For use outside the home, first set up HTTPS/WSS, secure deployment, backups, rate limiting, and operational monitoring.
+
+The API's `encrypted` field is metadata, not end-to-end encryption. Do not describe Voxis as E2EE until client-side cryptography and key verification are implemented and audited. Voice/video call signaling is not a complete calling system.
