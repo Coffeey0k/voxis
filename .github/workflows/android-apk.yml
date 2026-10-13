@@ -44,6 +44,7 @@ jobs:
           mkdir -p android/app/src/debug
           cat > android/app/src/debug/AndroidManifest.xml <<'MANIFEST'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.INTERNET" />
             <application android:usesCleartextTraffic="true" />
           </manifest>
           MANIFEST
