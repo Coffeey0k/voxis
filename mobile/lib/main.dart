@@ -737,7 +737,13 @@ class _VoxisHomeState extends State<VoxisHome> {
     if (!mounted) return;
     _pollTimer?.cancel();
     _pollTimer = null;
+    _typingTimer?.cancel();
+    _typingTimer = null;
+    await _channel?.sink.close();
+    _channel = null;
+    _onlineUsers.clear();
     setState(() {
+      _peerTyping = false;
       _token = null;
       _myUsername = null;
       _peer = null;
