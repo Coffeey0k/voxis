@@ -407,6 +407,16 @@ def unpin_message(message_id:int,authorization:Optional[str]=Header(default=None
         c.execute("DELETE FROM pinned_messages WHERE username=? AND message_id=?",(u,message_id))
     return {"ok":True}
 
+@app.get("/api/presence/{username}")
+def get_presence(username:str,authorization:Optional[str]=Header(default=None)):
+    me=me_user(authorization)
+    with db() as c:
+        if not c.execute("SELECT 1 FROM users WHERE username=?",(username,)).fetchone(): raise HTTPException(404,"Пользователь не найден")
+        blocked=c.execute("SELECT 1 FROM blocked_users WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)",(me,username,username,me)).fetchone()
+    if blocked: return {"username":username,"online":False}
+    with live_lock: online=bool(live.get(username))
+    return {"username":username,"online":online}
+
 @app.websocket("/ws")
 async def ws_endpoint(ws:WebSocket,token:str=""):
     u=user_token(token)
@@ -414,11 +424,31 @@ async def ws_endpoint(ws:WebSocket,token:str=""):
     await ws.accept()
     with live_lock:live.setdefault(u,set()).add(ws)
     try:
+        with db() as c:
+            recipients=[r["username"] for r in c.execute("SELECT username FROM users WHERE username<>?",(u,)).fetchall()]
+            c.execute("UPDATE devices SET last_seen=? WHERE username=?",(now(),u))
+        for recipient in recipients:
+            await notify(recipient,{"type":"presence","username":u,"online":True})
         while True:
             event=await ws.receive_json()
-            if event.get("type")=="call_signal":
-                target=event.get("to")
-                if isinstance(target,str):await notify(target,{"type":"call_signal","from":u,"payload":event.get("payload",{})})
+            kind=event.get("type")
+            target=event.get("to")
+            if kind=="call_signal" and isinstance(target,str):
+                await notify(target,{"type":"call_signal","from":u,"payload":event.get("payload",{})})
+            elif kind=="typing" and isinstance(target,str) and target!=u:
+                with db() as c:
+                    exists=c.execute("SELECT 1 FROM users WHERE username=?",(target,)).fetchone()
+                    blocked=c.execute("SELECT 1 FROM blocked_users WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)",(u,target,target,u)).fetchone()
+                if exists and not blocked:
+                    await notify(target,{"type":"typing","from":u,"active":bool(event.get("active",True))})
     except (WebSocketDisconnect,Exception):pass
     finally:
-        with live_lock:live.get(u,set()).discard(ws)
+        with live_lock:
+            live.get(u,set()).discard(ws)
+            still_online=bool(live.get(u))
+        if not still_online:
+            with db() as c:
+                c.execute("UPDATE devices SET last_seen=? WHERE username=?",(now(),u))
+                recipients=[r["username"] for r in c.execute("SELECT username FROM users WHERE username<>?",(u,)).fetchall()]
+            for recipient in recipients:
+                await notify(recipient,{"type":"presence","username":u,"online":False})
