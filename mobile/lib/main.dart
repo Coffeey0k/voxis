@@ -377,6 +377,10 @@ class _VoxisHomeState extends State<VoxisHome> {
               if (res.statusCode < 200 || res.statusCode >= 300) {
                 if (mounted) _showError(Exception(_apiError(res)));
               } else if (mounted) {
+                setState(() {
+                  _avatarUrl = '$_baseUrl/api/avatar/${Uri.encodeComponent(_myUsername ?? '')}?v=${DateTime.now().millisecondsSinceEpoch}';
+                });
+                await _loadUsers();
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Avatar updated')));
               }
             }, icon: const Icon(Icons.photo_camera_outlined), label: const Text('Change avatar')),
@@ -505,6 +509,12 @@ class _VoxisHomeState extends State<VoxisHome> {
                   ? Icons.light_mode_rounded
                   : Icons.dark_mode_rounded),
             ),
+            if (_token != null)
+              IconButton(
+                tooltip: 'Profile and settings',
+                onPressed: _openProfileSettings,
+                icon: const Icon(Icons.account_circle_outlined),
+              ),
             if (_token != null)
               IconButton(
                 tooltip: 'Refresh users and history',
