@@ -120,6 +120,22 @@ class _VoxisHomeState extends State<VoxisHome> {
   final ScrollController _chatScroll = ScrollController();
   Timer? _pollTimer;
 
+  String _absoluteUrl(String? path) {
+    if (path == null || path.isEmpty) return '';
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    return '$_baseUrl${path.startsWith('/') ? path : '/$path'}';
+  }
+
+  Widget _avatar(Map<String, dynamic>? user, {double radius = 22}) {
+    final name = user?['display_name']?.toString() ?? user?['username']?.toString() ?? '?';
+    final url = _absoluteUrl(user?['avatar_url']?.toString());
+    return CircleAvatar(
+      radius: radius,
+      backgroundImage: url.isNotEmpty ? NetworkImage(url) : null,
+      child: url.isEmpty ? Text(name.isEmpty ? '?' : name.characters.first.toUpperCase()) : null,
+    );
+  }
+
   String get _baseUrl {
     var value = _server.text.trim().replaceAll(RegExp(r'/+$'), '');
     if (!value.startsWith('http://') && !value.startsWith('https://')) {
@@ -340,7 +356,13 @@ class _VoxisHomeState extends State<VoxisHome> {
         builder: (dialogContext) => AlertDialog(
           title: const Text('Profile & settings'),
           content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            CircleAvatar(radius: 34, child: Text((_displayName.isEmpty ? _myUsername ?? '?' : _displayName)[0].toUpperCase(), style: const TextStyle(fontSize: 24))),
+            CircleAvatar(
+              radius: 34,
+              backgroundImage: _absoluteUrl(_avatarUrl).isNotEmpty ? NetworkImage(_absoluteUrl(_avatarUrl)) : null,
+              child: _absoluteUrl(_avatarUrl).isEmpty
+                  ? Text((_displayName.isEmpty ? _myUsername ?? '?' : _displayName)[0].toUpperCase(), style: const TextStyle(fontSize: 24))
+                  : null,
+            ),
             const SizedBox(height: 8),
             OutlinedButton.icon(onPressed: () async {
               final file = await FilePicker.pickFile(type: FileType.image);
@@ -584,17 +606,7 @@ class _VoxisHomeState extends State<VoxisHome> {
           ),
           child: Row(
             children: [
-              CircleAvatar(
-                radius: 23,
-                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                child: Text(
-                  displayName.isEmpty ? '?' : displayName.characters.first.toUpperCase(),
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
+              _avatar(peerData == null ? null : Map<String, dynamic>.from(peerData), radius: 23),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -666,11 +678,7 @@ class _VoxisHomeState extends State<VoxisHome> {
                   padding: const EdgeInsets.only(right: 8),
                   child: ChoiceChip(
                     selected: selected,
-                    avatar: CircleAvatar(
-                      radius: 12,
-                      child: Text(name.isEmpty ? '?' : name.characters.first.toUpperCase(),
-                        style: const TextStyle(fontSize: 10)),
-                    ),
+                    avatar: _avatar(Map<String, dynamic>.from(user), radius: 12),
                     label: Text(name, overflow: TextOverflow.ellipsis),
                     onSelected: _busy ? null : (_) => _selectPeer(username),
                   ),
@@ -828,8 +836,8 @@ class _VoxisHomeState extends State<VoxisHome> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 IconButton(
-                  tooltip: 'More options',
-                  onPressed: null,
+                  tooltip: 'Send a file',
+                  onPressed: _peer == null || _uploading || _busy ? null : _pickAndSendFile,
                   icon: Icon(Icons.add_circle_outline_rounded,
                     color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
