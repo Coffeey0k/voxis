@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:file_saver/file_saver.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 void main() => runApp(const VoxisApp());
 
@@ -124,6 +125,10 @@ class _VoxisHomeState extends State<VoxisHome> {
   bool _uploading = false;
   final ScrollController _chatScroll = ScrollController();
   Timer? _pollTimer;
+  Timer? _typingTimer;
+  WebSocketChannel? _channel;
+  bool _peerTyping = false;
+  final Map<String, bool> _onlineUsers = {};
 
   String _absoluteUrl(String? path) {
     if (path == null || path.isEmpty) return '';
@@ -157,6 +162,8 @@ class _VoxisHomeState extends State<VoxisHome> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _typingTimer?.cancel();
+    _channel?.sink.close();
     _chatScroll.dispose();
     _server.dispose();
     _username.dispose();
@@ -229,6 +236,7 @@ class _VoxisHomeState extends State<VoxisHome> {
         _status = 'Connected as ${data['username']}';
         _password.clear();
       });
+      await _connectRealtime();
       await _loadUsers();
       _pollTimer?.cancel();
       _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
@@ -242,6 +250,59 @@ class _VoxisHomeState extends State<VoxisHome> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _connectRealtime() async {
+    final token = _token;
+    if (token == null) return;
+    try {
+      await _channel?.sink.close();
+      final base = Uri.parse(_baseUrl);
+      final socketUri = base.replace(
+        scheme: base.scheme == 'https' ? 'wss' : 'ws',
+        path: '/ws',
+        queryParameters: {'token': token},
+      );
+      final channel = WebSocketChannel.connect(socketUri);
+      _channel = channel;
+      await channel.ready.timeout(const Duration(seconds: 8));
+      channel.stream.listen((event) {
+        try {
+          final data = jsonDecode(event.toString()) as Map<String, dynamic>;
+          final type = data['type'];
+          if (type == 'presence') {
+            final username = data['username']?.toString();
+            if (username != null && mounted) {
+              setState(() => _onlineUsers[username] = data['online'] == true);
+            }
+          } else if (type == 'typing' && data['from'] == _peer) {
+            if (mounted) setState(() => _peerTyping = data['active'] == true);
+            _typingTimer?.cancel();
+            if (data['active'] == true) {
+              _typingTimer = Timer(const Duration(seconds: 3), () {
+                if (mounted) setState(() => _peerTyping = false);
+              });
+            }
+          } else if (type == 'message' || type == 'message_edited' || type == 'message_deleted') {
+            final sender = data['message'] is Map ? data['message']['sender']?.toString() : null;
+            if (type != 'message' || sender == _peer || data['message']?['recipient'] == _myUsername) {
+              _loadHistory(silent: true);
+            }
+          }
+        } catch (_) {}
+      }, onError: (_) {}, onDone: () {});
+    } catch (_) {
+      // REST polling remains available when realtime connectivity is unavailable.
+    }
+  }
+
+  void _sendTyping(String value) {
+    final peer = _peer;
+    final channel = _channel;
+    if (peer == null || channel == null || _token == null) return;
+    try {
+      channel.sink.add(jsonEncode({'type': 'typing', 'to': peer, 'active': value.trim().isNotEmpty}));
+    } catch (_) {}
   }
 
   Future<void> _loadUsers() async {
@@ -277,6 +338,7 @@ class _VoxisHomeState extends State<VoxisHome> {
     if (peer == null) return;
     setState(() {
       _peer = peer;
+      _peerTyping = false;
       _messages = [];
     });
     await _loadHistory();
@@ -875,7 +937,7 @@ class _VoxisHomeState extends State<VoxisHome> {
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                     const SizedBox(height: 3),
                     Text(
-                      peer == null ? 'Choose a conversation' : '@$peer · Voxis',
+                      peer == null ? 'Choose a conversation' : _peerTyping ? 'typing…' : (_onlineUsers[peer] == true ? 'online' : '@$peer · Voxis'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -1167,6 +1229,7 @@ class _VoxisHomeState extends State<VoxisHome> {
                     maxLines: 5,
                     textCapitalization: TextCapitalization.sentences,
                     keyboardType: TextInputType.multiline,
+                    onChanged: _sendTyping,
                     onSubmitted: (_) => _sendMessage(),
                     decoration: InputDecoration(
                       hintText: _peer == null ? 'Choose a contact first' : 'Message…',
