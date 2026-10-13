@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QTextEdit,
+    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QTextEdit, QGroupBox,
     QVBoxLayout, QWidget, QFileDialog, QDialogButtonBox, QInputDialog,
 )
 
@@ -32,16 +32,23 @@ class VoxisWindow(QMainWindow):
         brand = QLabel("◉  Voxis")
         brand.setStyleSheet("font-size: 26px; font-weight: 800; padding: 8px;")
         sidebar.addWidget(brand)
+        auth_box = QGroupBox("Welcome to Voxis")
+        auth_box.setStyleSheet("QGroupBox { font-size: 14px; font-weight: 700; border: 1px solid #303b5b; border-radius: 14px; margin-top: 10px; padding-top: 12px; } QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }")
+        auth_layout = QVBoxLayout(auth_box)
+        auth_hint = QLabel("Sign in or create an account to start chatting.")
+        auth_hint.setWordWrap(True)
+        auth_hint.setStyleSheet("color: #9ca8c7; font-weight: 400;")
+        auth_layout.addWidget(auth_hint)
         self.server = QLineEdit("http://127.0.0.1:8000")
         self.server.setPlaceholderText("API server URL")
-        sidebar.addWidget(self.server)
+        auth_layout.addWidget(self.server)
         self.username = QLineEdit()
         self.username.setPlaceholderText("Username")
-        sidebar.addWidget(self.username)
+        auth_layout.addWidget(self.username)
         self.password = QLineEdit()
         self.password.setPlaceholderText("Password")
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        sidebar.addWidget(self.password)
+        auth_layout.addWidget(self.password)
         authrow = QHBoxLayout()
         login = QPushButton("Log in")
         login.clicked.connect(lambda: self.authenticate(False))
@@ -49,7 +56,8 @@ class VoxisWindow(QMainWindow):
         register.clicked.connect(lambda: self.authenticate(True))
         authrow.addWidget(login)
         authrow.addWidget(register)
-        sidebar.addLayout(authrow)
+        auth_layout.addLayout(authrow)
+        sidebar.addWidget(auth_box)
         self.status = QLabel("Not connected")
         self.status.setWordWrap(True)
         sidebar.addWidget(self.status)
