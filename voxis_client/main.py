@@ -3,9 +3,10 @@ import sys
 import mimetypes
 import requests
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QMainWindow, QMessageBox, QPushButton, QTextEdit,
+    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QTextEdit,
     QVBoxLayout, QWidget, QFileDialog, QDialogButtonBox, QInputDialog,
 )
 
@@ -170,7 +171,20 @@ class VoxisWindow(QMainWindow):
             self.chats.blockSignals(True)
             self.chats.clear()
             for user in data:
-                self.chats.addItem(user.get("username", ""))
+                username = user.get("username", "")
+                item = QListWidgetItem(username)
+                avatar_url = user.get("avatar_url")
+                if avatar_url:
+                    try:
+                        url = avatar_url if avatar_url.startswith("http") else self.base + avatar_url
+                        image_response = requests.get(url, timeout=5)
+                        if image_response.ok:
+                            pixmap = QPixmap()
+                            if pixmap.loadFromData(image_response.content):
+                                item.setIcon(QIcon(pixmap.scaled(34, 34, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)))
+                    except requests.RequestException:
+                        pass
+                self.chats.addItem(item)
             matches = self.chats.findItems(current or "", Qt.MatchFlag.MatchExactly)
             if matches:
                 self.chats.setCurrentItem(matches[0])
@@ -315,6 +329,8 @@ class VoxisWindow(QMainWindow):
                     files={"file": (os.path.basename(path), file, mimetypes.guess_type(path)[0] or "image/jpeg")}, timeout=30)
             if not r.ok:
                 raise RuntimeError(self.request_error(r))
+            self.load_profile()
+            self.refresh_all()
             QMessageBox.information(self, "Voxis", "Avatar updated.")
         except Exception as e:
             self.notify_error(e)
