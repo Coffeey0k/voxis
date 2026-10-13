@@ -6,23 +6,91 @@ import 'package:http/http.dart' as http;
 
 void main() => runApp(const VoxisApp());
 
-class VoxisApp extends StatelessWidget {
+class VoxisApp extends StatefulWidget {
   const VoxisApp({super.key});
+
+  @override
+  State<VoxisApp> createState() => _VoxisAppState();
+}
+
+class _VoxisAppState extends State<VoxisApp> {
+  ThemeMode _themeMode = ThemeMode.dark;
+
+  ThemeData _glassTheme(Brightness brightness) {
+    final dark = brightness == Brightness.dark;
+    final scheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF8B78FF),
+      brightness: brightness,
+      surface: dark ? const Color(0xFF11182B) : const Color(0xFFF4F6FC),
+    );
+    return ThemeData(
+      useMaterial3: true,
+      brightness: brightness,
+      colorScheme: scheme,
+      scaffoldBackgroundColor:
+          dark ? const Color(0xFF090E1B) : const Color(0xFFF1F4FB),
+      appBarTheme: AppBarTheme(
+        backgroundColor:
+            dark ? const Color(0xCC11182B) : const Color(0xDDFBFCFF),
+        foregroundColor: scheme.onSurface,
+        elevation: 0,
+        centerTitle: false,
+      ),
+      cardTheme: CardTheme(
+        color: dark ? const Color(0xE61A2340) : const Color(0xE6FFFFFF),
+        elevation: dark ? 0 : 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(
+            color: dark ? const Color(0x443E4C77) : const Color(0xFFDDE3F2),
+          ),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: dark ? const Color(0xAA171F35) : const Color(0xCCFFFFFF),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(
+            color: dark ? const Color(0x443E4C77) : const Color(0xFFDDE3F2),
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(
+            color: dark ? const Color(0x443E4C77) : const Color(0xFFDDE3F2),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'Voxis',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF7357FF)),
-          useMaterial3: true,
+        theme: _glassTheme(Brightness.light),
+        darkTheme: _glassTheme(Brightness.dark),
+        themeMode: _themeMode,
+        home: VoxisHome(
+          isDark: _themeMode == ThemeMode.dark,
+          onToggleTheme: () => setState(() {
+            _themeMode =
+                _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+          }),
         ),
-        home: const VoxisHome(),
       );
 }
 
 class VoxisHome extends StatefulWidget {
-  const VoxisHome({super.key});
+  const VoxisHome({
+    super.key,
+    required this.isDark,
+    required this.onToggleTheme,
+  });
+
+  final bool isDark;
+  final VoidCallback onToggleTheme;
 
   @override
   State<VoxisHome> createState() => _VoxisHomeState();
@@ -250,6 +318,13 @@ class _VoxisHomeState extends State<VoxisHome> {
             Text('Voxis'),
           ]),
           actions: [
+            IconButton(
+              tooltip: widget.isDark ? 'Switch to light theme' : 'Switch to dark theme',
+              onPressed: widget.onToggleTheme,
+              icon: Icon(widget.isDark
+                  ? Icons.light_mode_rounded
+                  : Icons.dark_mode_rounded),
+            ),
             if (_token != null)
               IconButton(
                 tooltip: 'Refresh users and history',
