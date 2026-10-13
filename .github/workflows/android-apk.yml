@@ -44,6 +44,9 @@ jobs:
           flutter pub add file_picker
           flutter pub add file_saver
           flutter pub add http_parser
+          flutter pub add flutter_secure_storage
+          flutter pub add firebase_core
+          flutter pub add firebase_messaging
           mkdir -p android/app/src/debug
           cat > android/app/src/debug/AndroidManifest.xml <<'MANIFEST'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
