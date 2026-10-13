@@ -220,7 +220,7 @@ class VoxisWindow(QMainWindow):
                 time = str(m.get("created_at", ""))[11:16]
                 attachment = m.get("attachment_id")
                 if attachment:
-                    body += f' <span style="color:#b9aaff">[Attachment #{attachment}]</span>'
+                    body += f' <span style="color:#b9aaff">📎 {m.get("attachment_name") or "File"} · {m.get("attachment_size", 0)} bytes</span>'
                 align = "right" if mine else "left"
                 color = "#8774ff" if mine else "#222d49"
                 chunks.append(f'<div style="margin:10px 0;text-align:{align}"><span style="background:{color};padding:10px 13px;border-radius:13px;display:inline-block;max-width:75%"><b>{who}</b><br>{body}<br><small>{time}</small></span></div>')
