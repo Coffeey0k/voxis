@@ -1,0 +1,13 @@
+[Unit]
+Description=Voxis Messenger API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/voxis
+ExecStart=/opt/voxis/.venv/bin/uvicorn server:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+User=voxis
+
+[Install]
+WantedBy=multi-user.target
