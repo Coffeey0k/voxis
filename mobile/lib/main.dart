@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
 import 'package:http_parser/http_parser.dart';
@@ -102,6 +105,9 @@ class VoxisHome extends StatefulWidget {
 }
 
 class _VoxisHomeState extends State<VoxisHome> {
+  static const _secureStorage = FlutterSecureStorage();
+  StreamSubscription<String>? _pushTokenSubscription;
+  bool _pushInitialized = false;
   final _server = TextEditingController(text: 'http://10.0.2.2:8000');
   final _username = TextEditingController();
   final _password = TextEditingController();
@@ -160,7 +166,14 @@ class _VoxisHomeState extends State<VoxisHome> {
       };
 
   @override
+  void initState() {
+    super.initState();
+    _restoreSession();
+  }
+
+  @override
   void dispose() {
+    _pushTokenSubscription?.cancel();
     _pollTimer?.cancel();
     _typingTimer?.cancel();
     _channel?.sink.close();
@@ -170,6 +183,84 @@ class _VoxisHomeState extends State<VoxisHome> {
     _password.dispose();
     _message.dispose();
     super.dispose();
+  }
+
+
+  Future<void> _restoreSession() async {
+    try {
+      final token = await _secureStorage.read(key: 'session_token');
+      final username = await _secureStorage.read(key: 'session_username');
+      final server = await _secureStorage.read(key: 'server_url');
+      if (server != null && server.trim().isNotEmpty) _server.text = server;
+      if (token == null || username == null || !mounted) return;
+      setState(() {
+        _token = token;
+        _myUsername = username;
+        _username.text = username;
+        _status = 'Restoring session…';
+      });
+      final response = await http.get(Uri.parse('$_baseUrl/api/me'), headers: _headers)
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode != 200) {
+        await _secureStorage.delete(key: 'session_token');
+        if (mounted) setState(() { _token = null; _myUsername = null; _status = 'Please log in again'; });
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _status = 'Connected as $username');
+      await _connectRealtime();
+      await _loadUsers();
+      await _registerPushToken();
+      _startPolling();
+    } catch (_) {
+      if (mounted) setState(() => _status = 'Offline — sign in to reconnect');
+    }
+  }
+
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (mounted && _token != null && !_busy) _loadHistory(silent: true);
+    });
+  }
+
+  Future<void> _registerPushToken() async {
+    if (_token == null || _myUsername == null) return;
+    const apiKey = String.fromEnvironment('VOXIS_FIREBASE_API_KEY');
+    const appId = String.fromEnvironment('VOXIS_FIREBASE_APP_ID');
+    const senderId = String.fromEnvironment('VOXIS_FIREBASE_SENDER_ID');
+    const projectId = String.fromEnvironment('VOXIS_FIREBASE_PROJECT_ID');
+    if ([apiKey, appId, senderId, projectId].any((v) => v.isEmpty)) return;
+    try {
+      if (!_pushInitialized) {
+        await Firebase.initializeApp(options: FirebaseOptions(
+          apiKey: apiKey, appId: appId, messagingSenderId: senderId, projectId: projectId,
+        ));
+        _pushInitialized = true;
+      }
+      final messaging = FirebaseMessaging.instance;
+      await messaging.requestPermission(alert: true, badge: true, sound: true);
+      final token = await messaging.getToken();
+      if (token != null) await _sendPushToken(token);
+      await _pushTokenSubscription?.cancel();
+      _pushTokenSubscription = messaging.onTokenRefresh.listen((token) {
+        _sendPushToken(token);
+      });
+    } catch (_) {
+      // Push is optional: authentication and chat must still work without Firebase config.
+    }
+  }
+
+  Future<void> _sendPushToken(String pushToken) async {
+    if (_token == null || _myUsername == null) return;
+    try {
+      await http.post(Uri.parse('$_baseUrl/api/devices'), headers: _headers,
+        body: jsonEncode({
+          'id': 'android-${_myUsername!.toLowerCase()}',
+          'platform': 'android',
+          'push_token': pushToken,
+        })).timeout(const Duration(seconds: 12));
+    } catch (_) {}
   }
 
   void _showError(Object error) {
@@ -236,12 +327,13 @@ class _VoxisHomeState extends State<VoxisHome> {
         _status = 'Connected as ${data['username']}';
         _password.clear();
       });
+      await _secureStorage.write(key: 'session_token', value: _token);
+      await _secureStorage.write(key: 'session_username', value: _myUsername);
+      await _secureStorage.write(key: 'server_url', value: _baseUrl);
       await _connectRealtime();
       await _loadUsers();
-      _pollTimer?.cancel();
-      _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-        if (mounted && _token != null && !_busy) _loadHistory(silent: true);
-      });
+      await _registerPushToken();
+      _startPolling();
     } catch (error) {
       if (mounted) {
         setState(() => _status = 'Connection failed');
@@ -752,6 +844,8 @@ class _VoxisHomeState extends State<VoxisHome> {
     await _channel?.sink.close();
     _channel = null;
     _onlineUsers.clear();
+    await _secureStorage.delete(key: 'session_token');
+    await _secureStorage.delete(key: 'session_username');
     setState(() {
       _peerTyping = false;
       _token = null;
