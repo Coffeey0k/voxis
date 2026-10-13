@@ -735,6 +735,9 @@ class _VoxisHomeState extends State<VoxisHome> {
                     final item = _messages[index];
                     final mine = item['sender'] == _myUsername;
                     final body = item['body']?.toString() ?? '';
+                    final attachmentId = item['attachment_id'];
+                    final attachmentName = item['attachment_name']?.toString() ?? 'File';
+                    final attachmentSize = item['attachment_size'];
                     final time = _displayTime(item['created_at']);
                     final previous = index > 0 ? _messages[index - 1] : null;
                     final sameSender = previous != null && (previous['sender'] == item['sender']);
@@ -787,7 +790,26 @@ class _VoxisHomeState extends State<VoxisHome> {
                                     ),
                                     const SizedBox(height: 3),
                                   ],
-                                  Text(
+                                  if (attachmentId != null) ...[
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      margin: const EdgeInsets.only(bottom: 6),
+                                      decoration: BoxDecoration(
+                                        color: (mine ? Theme.of(context).colorScheme.onPrimary : Theme.of(context).colorScheme.onSurface).withValues(alpha: 0.08),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                        const Icon(Icons.insert_drive_file_outlined, size: 24),
+                                        const SizedBox(width: 8),
+                                        Flexible(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                          Text(attachmentName, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                          Text(attachmentSize == null ? 'File attachment' : '${(attachmentSize as num) / 1024 < 1024 ? ((attachmentSize as num) / 1024).toStringAsFixed(1) + ' KB' : ((attachmentSize as num) / (1024 * 1024)).toStringAsFixed(1) + ' MB'}',
+                                            style: Theme.of(context).textTheme.labelSmall),
+                                        ])),
+                                      ]),
+                                    ),
+                                  ],
+                                  if (body.isNotEmpty) Text(
                                     body,
                                     style: TextStyle(
                                       height: 1.3,
