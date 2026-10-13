@@ -106,3 +106,14 @@ uvicorn server:app --host 127.0.0.1 --port 8000
 5. The client must obtain an FCM registration token and send it to `POST /api/devices` with its stable device ID, platform and `push_token`. The token is stored per account/device and can be revoked by deleting that device. Do not share service-account credentials with clients.
 
 Without `GOOGLE_APPLICATION_CREDENTIALS`, push is disabled and message delivery continues normally. The mobile client still needs Firebase SDK initialization, runtime notification permission handling, token refresh handling, and calling `POST /api/devices`; backend support alone does not make push notifications appear on a device.
+
+### Android client Firebase configuration
+
+The Flutter client initializes Firebase only when all four values are supplied at build time. In GitHub repository settings, add these **Actions secrets** (Firebase Android app values; never use the server service-account JSON here):
+
+- `VOXIS_FIREBASE_API_KEY`
+- `VOXIS_FIREBASE_APP_ID`
+- `VOXIS_FIREBASE_SENDER_ID`
+- `VOXIS_FIREBASE_PROJECT_ID`
+
+The Android workflow passes them as Dart compile-time defines. If they are absent, the app still builds and chat works, but push token registration is skipped. Re-run **Build Voxis Android APK** after adding secrets. On the server, configure `GOOGLE_APPLICATION_CREDENTIALS` separately with the private Firebase Admin service-account JSON. The client config and server credential are different things.
