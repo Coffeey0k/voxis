@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -114,6 +115,8 @@ class _VoxisHomeState extends State<VoxisHome> {
   List<Map<String, dynamic>> _users = [];
   List<Map<String, dynamic>> _messages = [];
   final Set<int> _readMarkedIds = {};
+  final Map<int, Uint8List> _attachmentCache = {};
+  final Map<int, Future<Uint8List?>> _attachmentRequests = {};
   String _displayName = '';
   String _bio = '';
   String _chatSearch = '';
@@ -439,19 +442,33 @@ class _VoxisHomeState extends State<VoxisHome> {
     return MediaType('application', 'octet-stream');
   }
 
+  Future<Uint8List?> _fetchAttachmentBytes(int id) {
+    if (_attachmentCache.containsKey(id)) return Future.value(_attachmentCache[id]);
+    return _attachmentRequests.putIfAbsent(id, () async {
+      try {
+        final response = await http.get(
+          Uri.parse('$_baseUrl/api/attachments/$id'),
+          headers: {'Authorization': 'Bearer $_token'},
+        ).timeout(const Duration(seconds: 60));
+        if (response.statusCode < 200 || response.statusCode >= 300) return null;
+        _attachmentCache[id] = response.bodyBytes;
+        return response.bodyBytes;
+      } catch (_) {
+        return null;
+      } finally {
+        _attachmentRequests.remove(id);
+      }
+    });
+  }
+
   Future<void> _downloadAttachment(dynamic id, String name) async {
     if (_token == null || id == null) return;
     try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/api/attachments/$id'),
-        headers: {'Authorization': 'Bearer $_token'},
-      ).timeout(const Duration(seconds: 60));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception(_apiError(response));
-      }
+      final bytes = await _fetchAttachmentBytes(id is int ? id : int.parse(id.toString()));
+      if (bytes == null) throw Exception('Could not download this attachment');
       await FileSaver.instance.saveFile(
         name: name.isEmpty ? 'attachment' : name,
-        bytes: response.bodyBytes,
+        bytes: bytes,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -992,6 +1009,7 @@ class _VoxisHomeState extends State<VoxisHome> {
                     final attachmentId = item['attachment_id'];
                     final attachmentName = item['attachment_name']?.toString() ?? 'File';
                     final attachmentSize = item['attachment_size'];
+                    final attachmentType = item['attachment_content_type']?.toString() ?? '';
                     final time = _displayTime(item['created_at']);
                     final previous = index > 0 ? _messages[index - 1] : null;
                     final sameSender = previous != null && (previous['sender'] == item['sender']);
@@ -1045,6 +1063,24 @@ class _VoxisHomeState extends State<VoxisHome> {
                                       ),
                                     ),
                                     const SizedBox(height: 3),
+                                  ],
+                                  if (attachmentId != null && attachmentType.startsWith('image/')) ...[
+                                    FutureBuilder<Uint8List?>(
+                                      future: _fetchAttachmentBytes(attachmentId is int ? attachmentId : int.tryParse(attachmentId.toString()) ?? -1),
+                                      builder: (context, snapshot) {
+                                        if (!snapshot.hasData) return const Padding(
+                                          padding: EdgeInsets.only(bottom: 6),
+                                          child: SizedBox(width: 220, height: 120, child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
+                                        );
+                                        return InkWell(
+                                          onTap: () => _downloadAttachment(attachmentId, attachmentName),
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(12),
+                                            child: Image.memory(snapshot.data!, width: 240, height: 190, fit: BoxFit.cover),
+                                          ),
+                                        );
+                                      },
+                                    ),
                                   ],
                                   if (attachmentId != null) ...[
                                     InkWell(
