@@ -1089,6 +1089,7 @@ class _VoxisHomeState extends State<VoxisHome> {
                     final attachmentSize = item['attachment_size'];
                     final attachmentType = item['attachment_content_type']?.toString() ?? '';
                     final time = _displayTime(item['created_at']);
+                    final statusMark = mine ? (item['read_at'] != null ? ' ✓✓' : ' ✓') : '';
                     final previous = index > 0 ? _messages[index - 1] : null;
                     final sameSender = previous != null && (previous['sender'] == item['sender']);
                     return Padding(
@@ -1195,7 +1196,7 @@ class _VoxisHomeState extends State<VoxisHome> {
                                   Align(
                                     alignment: Alignment.bottomRight,
                                     child: Text(
-                                      time,
+                                      '$time$statusMark',
                                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                                         fontSize: 10,
                                         color: mine
