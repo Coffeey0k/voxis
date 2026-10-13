@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
 import 'package:http_parser/http_parser.dart';
+import 'package:file_saver/file_saver.dart';
 
 void main() => runApp(const VoxisApp());
 
@@ -421,6 +422,30 @@ class _VoxisHomeState extends State<VoxisHome> {
     return MediaType('application', 'octet-stream');
   }
 
+  Future<void> _downloadAttachment(dynamic id, String name) async {
+    if (_token == null || id == null) return;
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/attachments/$id'),
+        headers: {'Authorization': 'Bearer $_token'},
+      ).timeout(const Duration(seconds: 60));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception(_apiError(response));
+      }
+      await FileSaver.instance.saveFile(
+        name: name.isEmpty ? 'attachment' : name,
+        bytes: response.bodyBytes,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Saved: $name')),
+        );
+      }
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
   Future<void> _pickAndSendFile() async {
     if (_token == null || _peer == null || _uploading || _busy) return;
     final file = await FilePicker.pickFile();
@@ -791,7 +816,10 @@ class _VoxisHomeState extends State<VoxisHome> {
                                     const SizedBox(height: 3),
                                   ],
                                   if (attachmentId != null) ...[
-                                    Container(
+                                    InkWell(
+                                      onTap: () => _downloadAttachment(attachmentId, attachmentName),
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Container(
                                       padding: const EdgeInsets.all(10),
                                       margin: const EdgeInsets.only(bottom: 6),
                                       decoration: BoxDecoration(
@@ -807,7 +835,7 @@ class _VoxisHomeState extends State<VoxisHome> {
                                             style: Theme.of(context).textTheme.labelSmall),
                                         ])),
                                       ]),
-                                    ),
+                                    )),
                                   ],
                                   if (body.isNotEmpty) Text(
                                     body,
