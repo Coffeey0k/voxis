@@ -342,7 +342,7 @@ class _VoxisHomeState extends State<VoxisHome> {
             CircleAvatar(radius: 34, child: Text((_displayName.isEmpty ? _myUsername ?? '?' : _displayName)[0].toUpperCase(), style: const TextStyle(fontSize: 24))),
             const SizedBox(height: 8),
             OutlinedButton.icon(onPressed: () async {
-              final picked = await FilePicker.platform.pickFiles(type: FileType.image, withData: true);
+              final picked = await FilePicker.pickFiles(type: FileType.image, withData: true);
               if (picked == null || picked.files.single.bytes == null) return;
               final file = picked.files.single;
               final req = http.MultipartRequest('POST', Uri.parse('$_baseUrl/api/avatar'))
@@ -400,7 +400,7 @@ class _VoxisHomeState extends State<VoxisHome> {
 
   Future<void> _pickAndSendFile() async {
     if (_token == null || _peer == null || _uploading || _busy) return;
-    final picked = await FilePicker.platform.pickFiles(withData: true);
+    final picked = await FilePicker.pickFiles(withData: true);
     if (picked == null || picked.files.single.bytes == null) return;
     final file = picked.files.single;
     if (file.size > 20 * 1024 * 1024) { _showError(Exception('Maximum file size is 20 MB')); return; }
