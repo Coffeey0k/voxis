@@ -474,6 +474,97 @@ class _VoxisHomeState extends State<VoxisHome> {
     finally { if (mounted) setState(() => _uploading = false); }
   }
 
+  Future<void> _searchMessages() async {
+    if (_token == null) return;
+    final controller = TextEditingController();
+    final query = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Search messages'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Search in your chats', prefixIcon: Icon(Icons.search)),
+          onSubmitted: (_) => Navigator.pop(ctx, controller.text.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Search')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (query == null || query.trim().isEmpty) return;
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/search/messages?q=${Uri.encodeQueryComponent(query.trim())}'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) throw Exception(_apiError(response));
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final results = (data['messages'] as List).cast<Map<String, dynamic>>();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Results: ${results.length}'),
+          content: SizedBox(
+            width: 420,
+            child: results.isEmpty
+                ? const Text('No messages found.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: results.length,
+                    separatorBuilder: (_, __) => const Divider(),
+                    itemBuilder: (_, i) {
+                      final item = results[i];
+                      final peer = item['sender'] == _myUsername ? item['recipient'] : item['sender'];
+                      return ListTile(
+                        leading: const Icon(Icons.chat_bubble_outline),
+                        title: Text(item['body']?.toString().isNotEmpty == true ? item['body'].toString() : (item['attachment_name']?.toString() ?? 'Attachment'), maxLines: 3, overflow: TextOverflow.ellipsis),
+                        subtitle: Text('@$peer · ${_displayTime(item['created_at'])}'),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          if (peer is String && _users.any((u) => u['username'] == peer)) _selectPeer(peer);
+                        },
+                      );
+                    },
+                  ),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+        ),
+      );
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _blockCurrentPeer() async {
+    final peer = _peer;
+    if (_token == null || peer == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Block @$peer?'),
+        content: const Text('They will not be able to exchange messages with you while blocked.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Block')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final response = await http.post(Uri.parse('$_baseUrl/api/blocks'), headers: _headers, body: jsonEncode({'username': peer})).timeout(const Duration(seconds: 15));
+      if (response.statusCode < 200 || response.statusCode >= 300) throw Exception(_apiError(response));
+      if (!mounted) return;
+      setState(() { _peer = null; _messages = []; });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('@$peer blocked')));
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
   Future<void> _logout() async {
     try {
       if (_token != null) {
@@ -702,11 +793,23 @@ class _VoxisHomeState extends State<VoxisHome> {
                 tooltip: 'Conversation options',
                 onSelected: (value) {
                   if (value == 'users') _loadUsers();
+                  if (value == 'profile') _openProfileSettings();
+                  if (value == 'search') _searchMessages();
+                  if (value == 'block') _blockCurrentPeer();
                   if (value == 'logout') _logout();
                 },
                 itemBuilder: (_) => const [
                   PopupMenuItem(value: 'users', child: ListTile(
                     leading: Icon(Icons.people_outline), title: Text('Refresh contacts'),
+                    contentPadding: EdgeInsets.zero, dense: true)),
+                  PopupMenuItem(value: 'profile', child: ListTile(
+                    leading: Icon(Icons.account_circle_outlined), title: Text('Profile & settings'),
+                    contentPadding: EdgeInsets.zero, dense: true)),
+                  PopupMenuItem(value: 'search', child: ListTile(
+                    leading: Icon(Icons.search_rounded), title: Text('Search messages'),
+                    contentPadding: EdgeInsets.zero, dense: true)),
+                  PopupMenuItem(value: 'block', enabled: _peer != null, child: ListTile(
+                    leading: Icon(Icons.block_rounded), title: Text('Block this contact'),
                     contentPadding: EdgeInsets.zero, dense: true)),
                   PopupMenuItem(value: 'logout', child: ListTile(
                     leading: Icon(Icons.logout_rounded), title: Text('Log out'),
