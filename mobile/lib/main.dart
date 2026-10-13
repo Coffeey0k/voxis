@@ -458,7 +458,8 @@ class _VoxisHomeState extends State<VoxisHome> {
 
   Widget _buildChat() {
     final peer = _peer;
-    final peerData = _users.where((u) => u['username'] == peer).firstOrNull;
+    final peerMatches = _users.where((u) => u['username'] == peer).toList();
+    final peerData = peerMatches.isEmpty ? null : peerMatches.first;
     final displayName = peerData?['display_name']?.toString() ?? peer ?? 'Voxis';
     return Column(
       children: [
