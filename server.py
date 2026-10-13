@@ -212,13 +212,13 @@ def direct_history(peer:str,authorization:Optional[str]=Header(default=None),lim
     u=me_user(authorization);limit=max(1,min(limit,200))
     with db() as c:
         if not c.execute("SELECT 1 FROM users WHERE username=?",(peer,)).fetchone():raise HTTPException(404,"Пользователь не найден")
-        rows=c.execute("""SELECT id,sender,recipient,group_id,body,created_at,attachment_id,encrypted FROM messages WHERE group_id IS NULL AND ((sender=? AND recipient=?) OR (sender=? AND recipient=?)) ORDER BY id DESC LIMIT ?""",(u,peer,peer,u,limit)).fetchall()
+        rows=c.execute("""SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id WHERE m.group_id IS NULL AND ((sender=? AND recipient=?) OR (sender=? AND recipient=?)) ORDER BY id DESC LIMIT ?""",(u,peer,peer,u,limit)).fetchall()
     return {"messages":[dict(r) for r in reversed(rows)]}
 @app.get("/api/group-messages/{gid}")
 def group_history(gid:int,authorization:Optional[str]=Header(default=None),limit:int=100):
     u=me_user(authorization);limit=max(1,min(limit,200))
     with db() as c:
-        member(c,gid,u);rows=c.execute("SELECT id,sender,recipient,group_id,body,created_at,attachment_id,encrypted FROM messages WHERE group_id=? ORDER BY id DESC LIMIT ?",(gid,limit)).fetchall()
+        member(c,gid,u);rows=c.execute("SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id WHERE m.group_id=? ORDER BY m.id DESC LIMIT ?",(gid,limit)).fetchall()
     return {"messages":[dict(r) for r in reversed(rows)]}
 @app.post("/api/attachments")
 async def attachment_upload(file:UploadFile=File(...),authorization:Optional[str]=Header(default=None)):
