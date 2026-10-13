@@ -524,93 +524,125 @@ class _VoxisHomeState extends State<VoxisHome> {
 
   Widget _buildAuth() => Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Icon(Icons.forum_rounded, size: 64),
-                const SizedBox(height: 12),
-                Text(
-                  _registerMode ? 'Create your Voxis account' : 'Sign in to Voxis',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineSmall,
+            constraints: const BoxConstraints(maxWidth: 430),
+            child: Card(
+              clipBehavior: Clip.antiAlias,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 30, 24, 22),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 76,
+                        height: 76,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF8B78FF), Color(0xFF5A8CFF)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(25),
+                        ),
+                        child: const Icon(Icons.forum_rounded, color: Colors.white, size: 39),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      _registerMode ? 'Join Voxis' : 'Welcome back',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _registerMode
+                          ? 'Create an account to start private conversations.'
+                          : 'Sign in to continue your conversations.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 26),
+                    TextField(
+                      controller: _username,
+                      textInputAction: TextInputAction.next,
+                      autocorrect: false,
+                      textCapitalization: TextCapitalization.none,
+                      decoration: const InputDecoration(
+                        labelText: 'Username',
+                        hintText: 'your_username',
+                        helperText: '3–24 letters, numbers, dot, dash or underscore',
+                        prefixIcon: Icon(Icons.person_outline_rounded),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: _password,
+                      obscureText: true,
+                      enableSuggestions: false,
+                      autocorrect: false,
+                      onSubmitted: (_) => _authenticate(),
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        helperText: _registerMode ? 'At least 10 characters' : null,
+                        prefixIcon: const Icon(Icons.lock_outline_rounded),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    FilledButton(
+                      onPressed: _busy ? null : _authenticate,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                      ),
+                      child: _busy
+                          ? const SizedBox(width: 21, height: 21, child: CircularProgressIndicator(strokeWidth: 2))
+                          : Text(_registerMode ? 'Create account' : 'Log in'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _busy ? null : () => setState(() => _registerMode = !_registerMode),
+                      child: Text(_registerMode
+                          ? 'Already have an account? Log in'
+                          : 'New to Voxis? Create an account'),
+                    ),
+                    const Divider(height: 28),
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: const EdgeInsets.only(bottom: 8),
+                      leading: const Icon(Icons.dns_outlined),
+                      title: const Text('Connection settings'),
+                      subtitle: Text(_baseUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      children: [
+                        TextField(
+                          controller: _server,
+                          keyboardType: TextInputType.url,
+                          autocorrect: false,
+                          decoration: const InputDecoration(
+                            labelText: 'API server URL',
+                            hintText: 'http://192.168.1.10:8000',
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _status,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: _server,
-                  keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    labelText: 'API server URL',
-                    hintText: 'http://192.168.1.10:8000',
-                    prefixIcon: Icon(Icons.dns_outlined),
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _username,
-                  textInputAction: TextInputAction.next,
-                  autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'Username',
-                    helperText: '3–24 letters, numbers, dot, dash or underscore',
-                    prefixIcon: Icon(Icons.person_outline),
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _password,
-                  obscureText: true,
-                  onSubmitted: (_) => _authenticate(),
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    helperText: _registerMode ? 'At least 10 characters' : null,
-                    prefixIcon: const Icon(Icons.lock_outline),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: _busy ? null : _authenticate,
-                  child: Text(_busy
-                      ? 'Please wait…'
-                      : _registerMode
-                          ? 'Register'
-                          : 'Log in'),
-                ),
-                TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () => setState(() => _registerMode = !_registerMode),
-                  child: Text(_registerMode
-                      ? 'Already registered? Log in'
-                      : 'New to Voxis? Create an account'),
-                ),
-                const SizedBox(height: 8),
-                Text(_status, textAlign: TextAlign.center),
-                const SizedBox(height: 8),
-                const Text(
-                  'Android emulator: use http://10.0.2.2:8000. '
-                  'On a real phone, enter your computer’s LAN IP and keep both devices on the same Wi-Fi.',
-                  textAlign: TextAlign.center,
-                ),
-              ],
+              ),
             ),
           ),
         ),
       );
-
-  String _displayTime(dynamic raw) {
-    if (raw == null) return '';
-    final parsed = DateTime.tryParse(raw.toString())?.toLocal();
-    if (parsed == null) return '';
-    final hour = parsed.hour.toString().padLeft(2, '0');
-    final minute = parsed.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
-  }
 
   Widget _buildChat() {
     final peer = _peer;
