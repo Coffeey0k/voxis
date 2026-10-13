@@ -5,6 +5,7 @@ on:
       - 'server.py'
       - 'voxis_client/**'
       - 'requirements-server.txt'
+      - 'tests/**'
       - '.github/workflows/server-checks.yml'
   workflow_dispatch:
 jobs:
@@ -17,8 +18,12 @@ jobs:
           python-version: '3.12'
       - name: Install server dependencies
         run: pip install -r requirements-server.txt
+      - name: Install test tools
+        run: pip install pytest httpx
       - name: Compile server and desktop client
         run: python -m py_compile server.py voxis_client/main.py
+      - name: Run API integration tests
+        run: pytest -q
       - name: Import API and verify routes
         run: |
           python - <<'PY'
