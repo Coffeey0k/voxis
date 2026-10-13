@@ -58,7 +58,7 @@ jobs:
           NDK_VERSION="28.2.13676358"
           for attempt in 1 2 3; do
             echo "Installing Android NDK $NDK_VERSION (attempt $attempt/3)"
-            if yes | "$SDKMANAGER" --install "ndk;$NDK_VERSION"; then
+            if "$SDKMANAGER" --install "ndk;$NDK_VERSION"; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then
