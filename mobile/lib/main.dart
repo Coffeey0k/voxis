@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -66,9 +67,11 @@ class _VoxisHomeState extends State<VoxisHome> {
 
   void _showError(Object error) {
     if (!mounted) return;
-    final text = error.toString().replaceFirst('Exception: ', '');
+    final text = error is TimeoutException
+        ? 'Сервер не ответил за 15 секунд. Проверь URL сервера, что API запущен, и что телефон и компьютер в одной Wi-Fi сети.'
+        : error.toString().replaceFirst('Exception: ', '');
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(text)));
+        .showSnackBar(SnackBar(content: Text(text, maxLines: 4)));
   }
 
   String _apiError(http.Response response) {
@@ -128,7 +131,9 @@ class _VoxisHomeState extends State<VoxisHome> {
       });
       await _loadUsers();
     } catch (error) {
-      if (mounted) setState(() => _status = 'Connection failed');
+      if (mounted) {
+        setState(() => _status = 'Connection failed');
+      }
       _showError(error);
     } finally {
       if (mounted) setState(() => _busy = false);
