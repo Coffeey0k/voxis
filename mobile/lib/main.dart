@@ -110,6 +110,8 @@ class _VoxisHomeState extends State<VoxisHome> {
   String _status = 'Not connected';
   List<Map<String, dynamic>> _users = [];
   List<Map<String, dynamic>> _messages = [];
+  final ScrollController _chatScroll = ScrollController();
+  Timer? _pollTimer;
 
   String get _baseUrl {
     var value = _server.text.trim().replaceAll(RegExp(r'/+$'), '');
@@ -126,6 +128,8 @@ class _VoxisHomeState extends State<VoxisHome> {
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
+    _chatScroll.dispose();
     _server.dispose();
     _username.dispose();
     _password.dispose();
@@ -198,6 +202,10 @@ class _VoxisHomeState extends State<VoxisHome> {
         _password.clear();
       });
       await _loadUsers();
+      _pollTimer?.cancel();
+      _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+        if (mounted && _token != null && !_busy) _loadHistory(silent: true);
+      });
     } catch (error) {
       if (mounted) {
         setState(() => _status = 'Connection failed');
@@ -246,7 +254,7 @@ class _VoxisHomeState extends State<VoxisHome> {
     await _loadHistory();
   }
 
-  Future<void> _loadHistory() async {
+  Future<void> _loadHistory({bool silent = false}) async {
     final peer = _peer;
     if (_token == null || peer == null) return;
     try {
@@ -261,9 +269,23 @@ class _VoxisHomeState extends State<VoxisHome> {
       final messages = (data['messages'] as List)
           .map((item) => Map<String, dynamic>.from(item as Map))
           .toList();
-      if (mounted && _peer == peer) setState(() => _messages = messages);
+      if (mounted && _peer == peer) {
+        final changed = jsonEncode(_messages) != jsonEncode(messages);
+        if (changed) {
+          setState(() => _messages = messages);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_chatScroll.hasClients) {
+              _chatScroll.animateTo(
+                _chatScroll.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOut,
+              );
+            }
+          });
+        }
+      }
     } catch (error) {
-      _showError(error);
+      if (!silent) _showError(error);
     }
   }
 
@@ -299,6 +321,8 @@ class _VoxisHomeState extends State<VoxisHome> {
       }
     } catch (_) {}
     if (!mounted) return;
+    _pollTimer?.cancel();
+    _pollTimer = null;
     setState(() {
       _token = null;
       _myUsername = null;
@@ -423,130 +447,310 @@ class _VoxisHomeState extends State<VoxisHome> {
         ),
       );
 
-  Widget _buildChat() => Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _peer,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Conversation',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.person_outline),
-                    ),
-                    hint: const Text('Register a second account to chat'),
-                    items: _users
-                        .map((user) => DropdownMenuItem<String>(
-                              value: user['username'] as String,
-                              child: Text(
-                                '${user['display_name']} (@${user['username']})',
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ))
-                        .toList(),
-                    onChanged: _busy ? null : _selectPeer,
+  String _displayTime(dynamic raw) {
+    if (raw == null) return '';
+    final parsed = DateTime.tryParse(raw.toString())?.toLocal();
+    if (parsed == null) return '';
+    final hour = parsed.hour.toString().padLeft(2, '0');
+    final minute = parsed.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  Widget _buildChat() {
+    final peer = _peer;
+    final peerData = _users.where((u) => u['username'] == peer).firstOrNull;
+    final displayName = peerData?['display_name']?.toString() ?? peer ?? 'Voxis';
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.92),
+            border: Border(
+              bottom: BorderSide(
+                color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.45),
+              ),
+            ),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 23,
+                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                child: Text(
+                  displayName.isEmpty ? '?' : displayName.characters.first.toUpperCase(),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                IconButton(
-                  onPressed: _busy ? null : _loadHistory,
-                  icon: const Icon(Icons.refresh),
-                ),
-              ],
-            ),
-          ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Text(_status, style: Theme.of(context).textTheme.bodySmall),
-            ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: _messages.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        _peer == null
-                            ? 'No other users yet. Create a second account on another device, or log out and register another username.'
-                            : 'No messages yet. Send the first message!',
-                        textAlign: TextAlign.center,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(displayName, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 3),
+                    Text(
+                      peer == null ? 'Choose a conversation' : '@$peer · Voxis',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
-                  )
-                : ListView.builder(
-                    reverse: false,
-                    padding: const EdgeInsets.all(12),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
-                      final item = _messages[index];
-                      final mine = item['sender'] == _myUsername;
-                      return Align(
-                        alignment:
-                            mine ? Alignment.centerRight : Alignment.centerLeft,
-                        child: Card(
-                          color: mine
-                              ? Theme.of(context).colorScheme.primaryContainer
-                              : Theme.of(context).colorScheme.surfaceContainerHighest,
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 300),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh messages',
+                onPressed: _busy ? null : () => _loadHistory(),
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Conversation options',
+                onSelected: (value) {
+                  if (value == 'users') _loadUsers();
+                  if (value == 'logout') _logout();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'users', child: ListTile(
+                    leading: Icon(Icons.people_outline), title: Text('Refresh contacts'),
+                    contentPadding: EdgeInsets.zero, dense: true)),
+                  PopupMenuItem(value: 'logout', child: ListTile(
+                    leading: Icon(Icons.logout_rounded), title: Text('Log out'),
+                    contentPadding: EdgeInsets.zero, dense: true)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (_users.length > 1)
+          SizedBox(
+            height: 56,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              children: _users.map((user) {
+                final username = user['username'] as String;
+                final selected = username == _peer;
+                final name = user['display_name']?.toString() ?? username;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    selected: selected,
+                    avatar: CircleAvatar(
+                      radius: 12,
+                      child: Text(name.isEmpty ? '?' : name.characters.first.toUpperCase(),
+                        style: const TextStyle(fontSize: 10)),
+                    ),
+                    label: Text(name, overflow: TextOverflow.ellipsis),
+                    onSelected: _busy ? null : (_) => _selectPeer(username),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        Expanded(
+          child: _messages.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 76,
+                          height: 76,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.65),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            peer == null ? Icons.forum_outlined : Icons.waving_hand_rounded,
+                            size: 34,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        Text(
+                          peer == null ? 'Your conversations start here' : 'Say hello to $displayName',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          peer == null
+                              ? 'Create another account on a second device to start chatting.'
+                              : 'No messages yet. Send the first message and start the conversation.',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  controller: _chatScroll,
+                  padding: const EdgeInsets.fromLTRB(14, 18, 14, 20),
+                  itemCount: _messages.length,
+                  itemBuilder: (context, index) {
+                    final item = _messages[index];
+                    final mine = item['sender'] == _myUsername;
+                    final body = item['body']?.toString() ?? '';
+                    final time = _displayTime(item['created_at']);
+                    final previous = index > 0 ? _messages[index - 1] : null;
+                    final sameSender = previous != null && (previous['sender'] == item['sender']);
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        top: sameSender ? 3 : 10,
+                        bottom: 2,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: mine ? MainAxisAlignment.end : MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          if (!mine && !sameSender) ...[
+                            CircleAvatar(
+                              radius: 14,
+                              backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                              child: Text(
+                                (item['sender']?.toString().isNotEmpty ?? false)
+                                    ? item['sender'].toString()[0].toUpperCase() : '?',
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                            const SizedBox(width: 7),
+                          ] else if (!mine) const SizedBox(width: 21),
+                          Flexible(
+                            child: Container(
+                              constraints: const BoxConstraints(maxWidth: 340),
+                              padding: const EdgeInsets.fromLTRB(13, 9, 12, 7),
+                              decoration: BoxDecoration(
+                                color: mine
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).colorScheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.only(
+                                  topLeft: const Radius.circular(18),
+                                  topRight: const Radius.circular(18),
+                                  bottomLeft: Radius.circular(mine ? 18 : (sameSender ? 18 : 5)),
+                                  bottomRight: Radius.circular(mine ? (sameSender ? 18 : 5) : 18),
+                                ),
+                              ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  if (!mine && !sameSender) ...[
+                                    Text(
+                                      item['sender']?.toString() ?? 'Unknown',
+                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                        color: Theme.of(context).colorScheme.primary,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                  ],
                                   Text(
-                                    mine ? 'You' : '${item['sender']}',
-                                    style: Theme.of(context).textTheme.labelSmall,
+                                    body,
+                                    style: TextStyle(
+                                      height: 1.3,
+                                      color: mine
+                                          ? Theme.of(context).colorScheme.onPrimary
+                                          : Theme.of(context).colorScheme.onSurface,
+                                    ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text('${item['body']}'),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${item['created_at']}',
-                                    style: Theme.of(context).textTheme.labelSmall,
+                                  const SizedBox(height: 3),
+                                  Align(
+                                    alignment: Alignment.bottomRight,
+                                    child: Text(
+                                      time,
+                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                        fontSize: 10,
+                                        color: mine
+                                            ? Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.72)
+                                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
                                   ),
                                 ],
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _message,
-                      enabled: _peer != null && !_busy,
-                      minLines: 1,
-                      maxLines: 4,
-                      onSubmitted: (_) => _sendMessage(),
-                      decoration: const InputDecoration(
-                        hintText: 'Write a message…',
-                        border: OutlineInputBorder(),
+                          if (mine) const SizedBox(width: 4),
+                        ],
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _peer == null || _busy ? null : _sendMessage,
-                    icon: const Icon(Icons.send_rounded),
-                  ),
-                ],
+                    );
+                  },
+                ),
+        ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 9, 12, 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            border: Border(
+              top: BorderSide(
+                color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.45),
               ),
             ),
           ),
-        ],
-      );
+          child: SafeArea(
+            top: false,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                IconButton(
+                  tooltip: 'More options',
+                  onPressed: null,
+                  icon: Icon(Icons.add_circle_outline_rounded,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _message,
+                    enabled: _peer != null && !_busy,
+                    minLines: 1,
+                    maxLines: 5,
+                    textCapitalization: TextCapitalization.sentences,
+                    keyboardType: TextInputType.multiline,
+                    onSubmitted: (_) => _sendMessage(),
+                    decoration: InputDecoration(
+                      hintText: _peer == null ? 'Choose a contact first' : 'Message…',
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 17, vertical: 12),
+                      filled: true,
+                      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.65),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(26),
+                        borderSide: BorderSide.none,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(26),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 46,
+                  width: 46,
+                  child: IconButton.filled(
+                    tooltip: 'Send message',
+                    onPressed: _peer == null || _busy ? null : _sendMessage,
+                    icon: _busy
+                        ? const SizedBox(width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.send_rounded),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
