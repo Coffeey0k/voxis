@@ -69,6 +69,8 @@ class Profile(BaseModel):
     display_name:str=Field(default="",max_length=60); bio:str=Field(default="",max_length=300)
 class GroupIn(BaseModel):
     name:str=Field(min_length=1,max_length=80); members:list[str]=Field(default_factory=list,max_length=100)
+class GroupRename(BaseModel):
+    name:str=Field(min_length=1,max_length=80)
 class MessageIn(BaseModel):
     recipient:Optional[str]=None; group_id:Optional[int]=None
     body:str=Field(default="",max_length=4000); attachment_id:Optional[int]=None; encrypted:bool=False
@@ -280,6 +282,38 @@ async def group_add(gid:int,d:GroupIn,authorization:Optional[str]=Header(default
             c.execute("INSERT OR IGNORE INTO group_members VALUES(?,?,?,?)",(gid,m,"member",now()))
     for m in d.members:await notify(m,{"type":"group_updated","group_id":gid})
     return {"ok":True}
+
+@app.patch("/api/groups/{gid}")
+async def group_rename(gid:int,d:GroupRename,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization); name=d.name.strip()
+    if not name:raise HTTPException(422,"Название не может быть пустым")
+    with db() as c:
+        g=c.execute("SELECT owner FROM groups_chat WHERE id=?",(gid,)).fetchone()
+        if not g:raise HTTPException(404,"Группа не найдена")
+        if g["owner"]!=u:raise HTTPException(403,"Только владелец может переименовать группу")
+        c.execute("UPDATE groups_chat SET name=? WHERE id=?",(name,gid))
+        targets=[x["username"] for x in c.execute("SELECT username FROM group_members WHERE group_id=?",(gid,)).fetchall()]
+    for target in targets:await notify(target,{"type":"group_updated","group_id":gid,"name":name})
+    return {"ok":True,"id":gid,"name":name}
+
+@app.delete("/api/groups/{gid}")
+async def group_leave_or_delete(gid:int,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        g=c.execute("SELECT owner,name FROM groups_chat WHERE id=?",(gid,)).fetchone()
+        if not g:raise HTTPException(404,"Группа не найдена")
+        row=c.execute("SELECT role FROM group_members WHERE group_id=? AND username=?",(gid,u)).fetchone()
+        if not row:raise HTTPException(403,"Ты не состоишь в этой группе")
+        targets=[x["username"] for x in c.execute("SELECT username FROM group_members WHERE group_id=?",(gid,)).fetchall()]
+        if g["owner"]==u:
+            c.execute("DELETE FROM groups_chat WHERE id=?",(gid,))
+            action="deleted"
+        else:
+            c.execute("DELETE FROM group_members WHERE group_id=? AND username=?",(gid,u))
+            action="left"
+    for target in targets:await notify(target,{"type":"group_updated","group_id":gid,"action":action})
+    return {"ok":True,"action":action}
+
 @app.get("/api/search/messages")
 def search_messages(q:str,authorization:Optional[str]=Header(default=None),limit:int=100):
     u=me_user(authorization); query=q.strip()
