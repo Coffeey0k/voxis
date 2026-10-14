@@ -15,7 +15,7 @@ _rate_lock=threading.Lock()
 _rate_hits={}
 _RATE_RULES=[
     ("/api/login", "POST", 12, 60),
-    ("/api/register", "POST", 8, 3600),
+    ("/api/register", "POST", 20, 3600),
     ("/api/attachments", "POST", 30, 60),
     ("/api/groups/join-by-invite", "POST", 20, 60),
 ]
