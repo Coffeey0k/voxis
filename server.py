@@ -74,6 +74,8 @@ class GroupRename(BaseModel):
 class MessageIn(BaseModel):
     recipient:Optional[str]=None; group_id:Optional[int]=None
     body:str=Field(default="",max_length=4000); attachment_id:Optional[int]=None; reply_to_id:Optional[int]=None; encrypted:bool=False
+class MessageForward(BaseModel):
+    recipient:Optional[str]=None; group_id:Optional[int]=None
 class EditMessage(BaseModel):
     body:str=Field(min_length=1,max_length=4000)
 class ReactionIn(BaseModel):
@@ -408,6 +410,22 @@ def accessible_message(c, message_id, username):
     elif username not in (row["sender"],row["recipient"]):
         raise HTTPException(403,"Нет доступа к сообщению")
     return row
+
+@app.post("/api/messages/{message_id}/forward")
+async def forward_message(message_id:int,d:MessageForward,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    if bool(d.recipient)==bool(d.group_id):raise HTTPException(400,"Укажи получателя или группу")
+    with db() as c:
+        source=accessible_message(c,message_id,u)
+        if d.recipient:
+            if not c.execute("SELECT 1 FROM users WHERE username=?",(d.recipient,)).fetchone():raise HTTPException(404,"Получатель не найден")
+            if c.execute("SELECT 1 FROM blocked_users WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)",(u,d.recipient,d.recipient,u)).fetchone():raise HTTPException(403,"Отправка сообщений этому пользователю недоступна")
+        else:member(c,d.group_id,u)
+        cur=c.execute("INSERT INTO messages(sender,recipient,group_id,body,created_at,attachment_id,encrypted) VALUES(?,?,?,?,?,?,0)",(u,d.recipient,d.group_id,source["body"],now(),source["attachment_id"]))
+        msg={"id":cur.lastrowid,"sender":u,"recipient":d.recipient,"group_id":d.group_id,"body":source["body"],"created_at":now(),"attachment_id":source["attachment_id"],"forwarded":True}
+        targets=[u,d.recipient] if d.recipient else [r["username"] for r in c.execute("SELECT username FROM group_members WHERE group_id=?",(d.group_id,)).fetchall()]
+    await notify_message_targets(targets,msg)
+    return {"message":msg}
 
 @app.patch("/api/messages/{message_id}")
 async def edit_message(message_id:int,d:EditMessage,authorization:Optional[str]=Header(default=None)):
