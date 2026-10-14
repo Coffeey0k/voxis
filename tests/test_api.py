@@ -94,3 +94,16 @@ def test_push_delivery_is_best_effort_and_contains_no_message_body(tmp_path, mon
             "message_id": sent.json()["message"]["id"], "sender": "push_alice"
         })]
         assert "private text" not in repr(calls)
+
+
+def test_web_client_is_served_from_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DB", tmp_path / "web.sqlite3")
+    monkeypatch.setattr(server, "UPLOADS", tmp_path / "uploads")
+    server.UPLOADS.mkdir(parents=True, exist_ok=True)
+    with TestClient(server.app) as client:
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "Voxis" in response.text
+        assert 'id="chatList"' in response.text
+        assert 'id="authForm"' in response.text
