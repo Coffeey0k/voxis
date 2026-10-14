@@ -48,6 +48,22 @@ def migrate():
             if n not in cols(c,"messages"): c.execute(f"ALTER TABLE messages ADD COLUMN {n} {ddl}")
         c.execute("CREATE INDEX IF NOT EXISTS idx_group_messages ON messages(group_id,id)")
         if 3 not in done: c.execute("INSERT INTO schema_migrations VALUES(3,?)",(now(),))
+        if 5 not in done:
+            c.executescript("""
+            CREATE TABLE IF NOT EXISTS group_invites(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL REFERENCES groups_chat(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_by TEXT NOT NULL REFERENCES users(username),
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                max_uses INTEGER,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                revoked_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_group_invites_group ON group_invites(group_id, revoked_at);
+            INSERT INTO schema_migrations VALUES(5,datetime('now'));
+            """)
         if 4 not in done:
             c.executescript("""
             CREATE TABLE IF NOT EXISTS message_receipts(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,delivered_at TEXT,read_at TEXT,PRIMARY KEY(message_id,username));
@@ -73,6 +89,11 @@ class GroupRole(BaseModel):
     role:str=Field(min_length=1,max_length=20)
 class GroupRename(BaseModel):
     name:str=Field(min_length=1,max_length=80)
+class GroupInviteIn(BaseModel):
+    expires_in_hours:Optional[int]=Field(default=168,ge=1,le=8760)
+    max_uses:Optional[int]=Field(default=None,ge=1,le=10000)
+class GroupJoinInvite(BaseModel):
+    token:str=Field(min_length=20,max_length=100)
 class MessageIn(BaseModel):
     recipient:Optional[str]=None; group_id:Optional[int]=None
     body:str=Field(default="",max_length=4000); attachment_id:Optional[int]=None; reply_to_id:Optional[int]=None; encrypted:bool=False
@@ -268,6 +289,60 @@ def group_list(authorization:Optional[str]=Header(default=None)):
     u=me_user(authorization)
     with db() as c:rows=c.execute("""SELECT g.id,g.name,g.owner,g.created_at,(SELECT COUNT(*) FROM group_members x WHERE x.group_id=g.id) member_count FROM groups_chat g JOIN group_members m ON m.group_id=g.id WHERE m.username=? ORDER BY g.id DESC""",(u,)).fetchall()
     return {"groups":[dict(r) for r in rows]}
+@app.post("/api/groups/{gid}/invites")
+def group_invite_create(gid:int,d:GroupInviteIn,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    raw=secrets.token_urlsafe(32)
+    expires=datetime.now(timezone.utc).timestamp()+d.expires_in_hours*3600 if d.expires_in_hours else None
+    expires_at=datetime.fromtimestamp(expires,timezone.utc).isoformat(timespec="seconds") if expires else None
+    with db() as c:
+        g=c.execute("SELECT owner FROM groups_chat WHERE id=?",(gid,)).fetchone()
+        if not g:raise HTTPException(404,"Группа не найдена")
+        if g["owner"]!=u:raise HTTPException(403,"Только владелец может создавать приглашения")
+        cur=c.execute("INSERT INTO group_invites(group_id,token_hash,created_by,created_at,expires_at,max_uses) VALUES(?,?,?,?,?,?)",
+                      (gid,tokhash(raw),u,now(),expires_at,d.max_uses))
+        invite_id=cur.lastrowid
+        name=c.execute("SELECT name FROM groups_chat WHERE id=?",(gid,)).fetchone()["name"]
+    return {"id":invite_id,"group_id":gid,"group_name":name,"token":raw,"expires_at":expires_at,"max_uses":d.max_uses}
+
+@app.get("/api/groups/{gid}/invites")
+def group_invite_list(gid:int,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        g=c.execute("SELECT owner FROM groups_chat WHERE id=?",(gid,)).fetchone()
+        if not g:raise HTTPException(404,"Группа не найдена")
+        if g["owner"]!=u:raise HTTPException(403,"Только владелец может просматривать приглашения")
+        rows=c.execute("SELECT id,created_by,created_at,expires_at,max_uses,use_count,revoked_at FROM group_invites WHERE group_id=? ORDER BY id DESC",(gid,)).fetchall()
+    return {"invites":[dict(r) for r in rows]}
+
+@app.delete("/api/groups/{gid}/invites/{invite_id}")
+def group_invite_revoke(gid:int,invite_id:int,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        g=c.execute("SELECT owner FROM groups_chat WHERE id=?",(gid,)).fetchone()
+        if not g:raise HTTPException(404,"Группа не найдена")
+        if g["owner"]!=u:raise HTTPException(403,"Только владелец может отзывать приглашения")
+        cur=c.execute("UPDATE group_invites SET revoked_at=? WHERE id=? AND group_id=? AND revoked_at IS NULL",(now(),invite_id,gid))
+        if not cur.rowcount:raise HTTPException(404,"Активное приглашение не найдено")
+    return {"ok":True}
+
+@app.post("/api/groups/join-by-invite")
+async def group_join_by_invite(d:GroupJoinInvite,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization); current=now()
+    with db() as c:
+        invite=c.execute("""SELECT i.*,g.name FROM group_invites i JOIN groups_chat g ON g.id=i.group_id
+            WHERE i.token_hash=? AND i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at>?)
+            AND (i.max_uses IS NULL OR i.use_count<i.max_uses)""",(tokhash(d.token),current)).fetchone()
+        if not invite:raise HTTPException(404,"Приглашение недействительно, истекло или отозвано")
+        if c.execute("SELECT 1 FROM group_members WHERE group_id=? AND username=?",(invite["group_id"],u)).fetchone():
+            return {"ok":True,"already_member":True,"group_id":invite["group_id"],"group_name":invite["name"]}
+        c.execute("INSERT INTO group_members(group_id,username,role,joined_at) VALUES(?,?,?,?)",(invite["group_id"],u,"member",current))
+        c.execute("UPDATE group_invites SET use_count=use_count+1 WHERE id=?",(invite["id"],))
+        targets=[r["username"] for r in c.execute("SELECT username FROM group_members WHERE group_id=?",(invite["group_id"],)).fetchall()]
+    for target in targets:
+        await notify(target,{"type":"group_updated","group_id":invite["group_id"],"action":"joined","username":u})
+    return {"ok":True,"already_member":False,"group_id":invite["group_id"],"group_name":invite["name"]}
+
 @app.get("/api/groups/{gid}/members")
 def group_members(gid:int,authorization:Optional[str]=Header(default=None)):
     u=me_user(authorization)
