@@ -44,7 +44,7 @@ def migrate():
         for n,ddl in [("display_name","TEXT NOT NULL DEFAULT ''"),("bio","TEXT NOT NULL DEFAULT ''"),("avatar_path","TEXT")]:
             if n not in cols(c,"users"): c.execute(f"ALTER TABLE users ADD COLUMN {n} {ddl}")
         if "device_id" not in cols(c,"sessions"): c.execute("ALTER TABLE sessions ADD COLUMN device_id TEXT")
-        for n,ddl in [("group_id","INTEGER REFERENCES groups_chat(id)"),("attachment_id","INTEGER REFERENCES attachments(id)"),("encrypted","INTEGER NOT NULL DEFAULT 0")]:
+        for n,ddl in [("group_id","INTEGER REFERENCES groups_chat(id)"),("attachment_id","INTEGER REFERENCES attachments(id)"),("encrypted","INTEGER NOT NULL DEFAULT 0"),("reply_to_id","INTEGER REFERENCES messages(id) ON DELETE SET NULL")]:
             if n not in cols(c,"messages"): c.execute(f"ALTER TABLE messages ADD COLUMN {n} {ddl}")
         c.execute("CREATE INDEX IF NOT EXISTS idx_group_messages ON messages(group_id,id)")
         if 3 not in done: c.execute("INSERT INTO schema_migrations VALUES(3,?)",(now(),))
@@ -73,7 +73,7 @@ class GroupRename(BaseModel):
     name:str=Field(min_length=1,max_length=80)
 class MessageIn(BaseModel):
     recipient:Optional[str]=None; group_id:Optional[int]=None
-    body:str=Field(default="",max_length=4000); attachment_id:Optional[int]=None; encrypted:bool=False
+    body:str=Field(default="",max_length=4000); attachment_id:Optional[int]=None; reply_to_id:Optional[int]=None; encrypted:bool=False
 class EditMessage(BaseModel):
     body:str=Field(min_length=1,max_length=4000)
 class ReactionIn(BaseModel):
@@ -333,13 +333,13 @@ def direct_history(peer:str,authorization:Optional[str]=Header(default=None),lim
     u=me_user(authorization);limit=max(1,min(limit,200))
     with db() as c:
         if not c.execute("SELECT 1 FROM users WHERE username=?",(peer,)).fetchone():raise HTTPException(404,"Пользователь не найден")
-        rows=c.execute("""SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type,(SELECT r.read_at FROM message_receipts r WHERE r.message_id=m.id AND r.username=CASE WHEN m.sender=? THEN m.recipient ELSE ? END) AS read_at FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id WHERE m.group_id IS NULL AND ((m.sender=? AND m.recipient=?) OR (m.sender=? AND m.recipient=?)) ORDER BY m.id DESC LIMIT ?""",(u,u,u,peer,peer,u,limit)).fetchall()
+        rows=c.execute("""SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.reply_to_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type,rm.body AS reply_body,rm.sender AS reply_sender,(SELECT r.read_at FROM message_receipts r WHERE r.message_id=m.id AND r.username=CASE WHEN m.sender=? THEN m.recipient ELSE ? END) AS read_at FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages rm ON rm.id=m.reply_to_id WHERE m.group_id IS NULL AND ((m.sender=? AND m.recipient=?) OR (m.sender=? AND m.recipient=?)) ORDER BY m.id DESC LIMIT ?""",(u,u,u,peer,peer,u,limit)).fetchall()
     return {"messages":[dict(r) for r in reversed(rows)]}
 @app.get("/api/group-messages/{gid}")
 def group_history(gid:int,authorization:Optional[str]=Header(default=None),limit:int=100):
     u=me_user(authorization);limit=max(1,min(limit,200))
     with db() as c:
-        member(c,gid,u);rows=c.execute("SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id WHERE m.group_id=? ORDER BY m.id DESC LIMIT ?",(gid,limit)).fetchall()
+        member(c,gid,u);rows=c.execute("SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.reply_to_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type,rm.body AS reply_body,rm.sender AS reply_sender FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages rm ON rm.id=m.reply_to_id WHERE m.group_id=? ORDER BY m.id DESC LIMIT ?",(gid,limit)).fetchall()
     return {"messages":[dict(r) for r in reversed(rows)]}
 @app.post("/api/attachments")
 async def attachment_upload(file:UploadFile=File(...),authorization:Optional[str]=Header(default=None)):
@@ -381,6 +381,8 @@ async def send(d:MessageIn,authorization:Optional[str]=Header(default=None)):
     u=me_user(authorization);body=d.body.strip()
     if not body and not d.attachment_id:raise HTTPException(400,"Пустое сообщение")
     if bool(d.recipient)==bool(d.group_id):raise HTTPException(400,"Укажи recipient или group_id")
+    if d.reply_to_id is not None:
+        with db() as c: accessible_message(c,d.reply_to_id,u)
     with db() as c:
         if d.recipient:
             if not c.execute("SELECT 1 FROM users WHERE username=?",(d.recipient,)).fetchone():raise HTTPException(404,"Получатель не найден")
@@ -390,8 +392,8 @@ async def send(d:MessageIn,authorization:Optional[str]=Header(default=None)):
         if d.attachment_id:
             a=c.execute("SELECT owner FROM attachments WHERE id=?",(d.attachment_id,)).fetchone()
             if not a or a["owner"]!=u:raise HTTPException(403,"Вложение не принадлежит отправителю")
-        cur=c.execute("INSERT INTO messages(sender,recipient,group_id,body,created_at,attachment_id,encrypted) VALUES(?,?,?,?,?,?,?)",(u,d.recipient,d.group_id,body,now(),d.attachment_id,int(d.encrypted)))
-        msg={"id":cur.lastrowid,"sender":u,"recipient":d.recipient,"group_id":d.group_id,"body":body,"created_at":now(),"attachment_id":d.attachment_id,"encrypted":d.encrypted}
+        cur=c.execute("INSERT INTO messages(sender,recipient,group_id,body,created_at,attachment_id,reply_to_id,encrypted) VALUES(?,?,?,?,?,?,?,?)",(u,d.recipient,d.group_id,body,now(),d.attachment_id,d.reply_to_id,int(d.encrypted)))
+        msg={"id":cur.lastrowid,"sender":u,"recipient":d.recipient,"group_id":d.group_id,"body":body,"created_at":now(),"attachment_id":d.attachment_id,"reply_to_id":d.reply_to_id,"encrypted":d.encrypted}
         targets=[u,d.recipient] if d.recipient else [r["username"] for r in c.execute("SELECT username FROM group_members WHERE group_id=?",(d.group_id,)).fetchall()]
     await notify_message_targets(targets,msg)
     return {"message":msg}
@@ -492,6 +494,27 @@ def unblock_user(username:str,authorization:Optional[str]=Header(default=None)):
     u=me_user(authorization)
     with db() as c:c.execute("DELETE FROM blocked_users WHERE blocker=? AND blocked=?",(u,username))
     return {"ok":True}
+
+@app.get("/api/chat-media/{peer}")
+def chat_media(peer:str,authorization:Optional[str]=Header(default=None),group_id:Optional[int]=None):
+    u=me_user(authorization)
+    with db() as c:
+        if group_id is not None:
+            member(c,group_id,u)
+            rows=c.execute("""SELECT m.id,m.sender,m.body,m.created_at,m.attachment_id,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type FROM messages m JOIN attachments a ON a.id=m.attachment_id WHERE m.group_id=? ORDER BY m.id DESC LIMIT 300""",(group_id,)).fetchall()
+        else:
+            if not c.execute("SELECT 1 FROM users WHERE username=?",(peer,)).fetchone(): raise HTTPException(404,"Пользователь не найден")
+            if c.execute("SELECT 1 FROM blocked_users WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)",(u,peer,peer,u)).fetchone(): raise HTTPException(403,"Медиа недоступны")
+            rows=c.execute("""SELECT m.id,m.sender,m.body,m.created_at,m.attachment_id,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type FROM messages m JOIN attachments a ON a.id=m.attachment_id WHERE m.group_id IS NULL AND ((m.sender=? AND m.recipient=?) OR (m.sender=? AND m.recipient=?)) ORDER BY m.id DESC LIMIT 300""",(u,peer,peer,u)).fetchall()
+    return {"media":[dict(x) for x in rows]}
+
+@app.get("/api/unread")
+def unread_counts(authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        direct=c.execute("""SELECT sender AS peer,COUNT(*) AS count FROM messages m WHERE recipient=? AND group_id IS NULL AND NOT EXISTS(SELECT 1 FROM message_receipts r WHERE r.message_id=m.id AND r.username=? AND r.read_at IS NOT NULL) GROUP BY sender""",(u,u)).fetchall()
+        groups=c.execute("""SELECT m.group_id,COUNT(*) AS count FROM messages m JOIN group_members gm ON gm.group_id=m.group_id AND gm.username=? WHERE m.sender<>? AND m.created_at>=gm.joined_at AND NOT EXISTS(SELECT 1 FROM message_receipts r WHERE r.message_id=m.id AND r.username=? AND r.read_at IS NOT NULL) GROUP BY m.group_id""",(u,u,u)).fetchall()
+    return {"users":{x["peer"]:x["count"] for x in direct},"groups":{str(x["group_id"]):x["count"] for x in groups}}
 
 @app.get("/api/pinned-messages")
 def list_pinned(authorization:Optional[str]=Header(default=None)):
