@@ -202,3 +202,26 @@ def test_group_invite_lifecycle_and_owner_permissions(tmp_path, monkeypatch):
         assert revoked.status_code == 200
         rejected = client.post("/api/groups/join-by-invite", headers=oh, json={"token": made2.json()["token"]})
         assert rejected.status_code == 404
+
+def test_group_moderator_permissions_are_limited(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DB", tmp_path / "moderators.sqlite3")
+    monkeypatch.setattr(server, "UPLOADS", tmp_path / "uploads")
+    server.UPLOADS.mkdir(parents=True, exist_ok=True)
+    with TestClient(server.app) as client:
+        owner = register(client, "mod_owner")
+        moderator = register(client, "mod_user")
+        member = register(client, "mod_member")
+        other = register(client, "mod_other")
+        oh = {"Authorization": f"Bearer {owner}"}
+        mh = {"Authorization": f"Bearer {moderator}"}
+        created = client.post("/api/groups", headers=oh, json={"name": "Moderated", "members": ["mod_user", "mod_member"]})
+        gid = created.json()["id"]
+        assert client.patch(f"/api/groups/{gid}/members/mod_user", headers=oh, json={"role": "moderator"}).status_code == 200
+        added = client.post(f"/api/groups/{gid}/members", headers=mh, json={"name": "ignored", "members": ["mod_other"]})
+        assert added.status_code == 200, added.text
+        removed = client.delete(f"/api/groups/{gid}/members/mod_member", headers=mh)
+        assert removed.status_code == 200, removed.text
+        protected = client.delete(f"/api/groups/{gid}/members/mod_user", headers=mh)
+        assert protected.status_code == 403
+        denied = client.patch(f"/api/groups/{gid}/members/mod_member", headers=mh, json={"role": "moderator"})
+        assert denied.status_code == 403
