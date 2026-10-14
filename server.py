@@ -69,6 +69,8 @@ class Profile(BaseModel):
     display_name:str=Field(default="",max_length=60); bio:str=Field(default="",max_length=300)
 class GroupIn(BaseModel):
     name:str=Field(min_length=1,max_length=80); members:list[str]=Field(default_factory=list,max_length=100)
+class GroupRole(BaseModel):
+    role:str=Field(min_length=1,max_length=20)
 class GroupRename(BaseModel):
     name:str=Field(min_length=1,max_length=80)
 class MessageIn(BaseModel):
@@ -284,6 +286,37 @@ async def group_add(gid:int,d:GroupIn,authorization:Optional[str]=Header(default
             if not c.execute("SELECT 1 FROM users WHERE username=?",(m,)).fetchone():raise HTTPException(404,f"Нет пользователя {m}")
             c.execute("INSERT OR IGNORE INTO group_members VALUES(?,?,?,?)",(gid,m,"member",now()))
     for m in d.members:await notify(m,{"type":"group_updated","group_id":gid})
+    return {"ok":True}
+
+@app.patch("/api/groups/{gid}/members/{username}")
+async def group_member_role(gid:int,username:str,d:GroupRole,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    if d.role not in ("member","moderator"):raise HTTPException(422,"Роль должна быть member или moderator")
+    with db() as c:
+        g=c.execute("SELECT owner FROM groups_chat WHERE id=?",(gid,)).fetchone()
+        if not g:raise HTTPException(404,"Группа не найдена")
+        if g["owner"]!=u:raise HTTPException(403,"Только владелец может менять роли")
+        target=c.execute("SELECT role FROM group_members WHERE group_id=? AND username=?",(gid,username)).fetchone()
+        if not target:raise HTTPException(404,"Участник не найден")
+        if username==g["owner"]:raise HTTPException(400,"Нельзя изменить роль владельца")
+        c.execute("UPDATE group_members SET role=? WHERE group_id=? AND username=?",(d.role,gid,username))
+        targets=[x["username"] for x in c.execute("SELECT username FROM group_members WHERE group_id=?",(gid,)).fetchall()]
+    for target_user in targets:await notify(target_user,{"type":"group_updated","group_id":gid})
+    return {"ok":True,"username":username,"role":d.role}
+
+@app.delete("/api/groups/{gid}/members/{username}")
+async def group_remove_member(gid:int,username:str,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        g=c.execute("SELECT owner FROM groups_chat WHERE id=?",(gid,)).fetchone()
+        if not g:raise HTTPException(404,"Группа не найдена")
+        if g["owner"]!=u:raise HTTPException(403,"Только владелец может удалять участников")
+        if username==g["owner"]:raise HTTPException(400,"Владельца нельзя удалить из группы")
+        cur=c.execute("DELETE FROM group_members WHERE group_id=? AND username=?",(gid,username))
+        if not cur.rowcount:raise HTTPException(404,"Участник не найден")
+        targets=[x["username"] for x in c.execute("SELECT username FROM group_members WHERE group_id=?",(gid,)).fetchall()]
+    await notify(username,{"type":"group_updated","group_id":gid,"action":"removed"})
+    for target_user in targets:await notify(target_user,{"type":"group_updated","group_id":gid})
     return {"ok":True}
 
 @app.patch("/api/groups/{gid}")
