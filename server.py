@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Header, Request, WebSocket, WebSocketDisconnect, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 ROOT=Path(__file__).resolve().parent
@@ -214,6 +214,28 @@ async def notify_message_targets(targets, msg):
         if target != msg["sender"]:
             await asyncio.to_thread(push_to_user, target, "message",
                                     {"message_id":msg["id"], "sender":msg["sender"]})
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def pwa_manifest():
+    return JSONResponse({
+        "name":"Voxis — мессенджер","short_name":"Voxis","description":"Личные и групповые разговоры в Voxis.",
+        "start_url":"/","scope":"/","display":"standalone","background_color":"#e9eef5","theme_color":"#527da3",
+        "icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+    },headers={"Cache-Control":"public, max-age=3600"})
+
+@app.get("/icon.svg", include_in_schema=False)
+def pwa_icon():
+    svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="128" fill="#527da3"/><path d="M118 112h90l48 82 48-82h90L300 256l94 144h-90l-48-82-48 82h-90l94-144z" fill="#fff"/></svg>'
+    return Response(svg,media_type="image/svg+xml",headers={"Cache-Control":"public, max-age=86400"})
+
+@app.get("/sw.js", include_in_schema=False)
+def pwa_service_worker():
+    js = """const CACHE='voxis-shell-v1';const SHELL=['/','/manifest.webmanifest','/icon.svg'];
+self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
+self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
+self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==self.location.origin||u.pathname.startsWith('/api/'))return;if(e.request.mode==='navigate'){e.respondWith(fetch(e.request).then(r=>{const copy=r.clone();caches.open(CACHE).then(c=>c.put('/',copy));return r}).catch(()=>caches.match('/')));return;}if(SHELL.includes(u.pathname))e.respondWith(caches.match(e.request).then(cached=>cached||fetch(e.request)));});
+"""
+    return Response(js,media_type="application/javascript",headers={"Cache-Control":"no-cache","Service-Worker-Allowed":"/"})
 
 @app.get("/", include_in_schema=False)
 def web_home():
