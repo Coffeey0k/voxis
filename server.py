@@ -335,7 +335,7 @@ async def group_create(d:GroupIn,authorization:Optional[str]=Header(default=None
 @app.get("/api/groups")
 def group_list(authorization:Optional[str]=Header(default=None)):
     u=me_user(authorization)
-    with db() as c:rows=c.execute("""SELECT g.id,g.name,g.owner,g.created_at,(SELECT COUNT(*) FROM group_members x WHERE x.group_id=g.id) member_count FROM groups_chat g JOIN group_members m ON m.group_id=g.id WHERE m.username=? ORDER BY g.id DESC""",(u,)).fetchall()
+    with db() as c:rows=c.execute("""SELECT g.id,g.name,g.owner,g.created_at,(SELECT COUNT(*) FROM group_members x WHERE x.group_id=g.id) member_count,m.role FROM groups_chat g JOIN group_members m ON m.group_id=g.id WHERE m.username=? ORDER BY g.id DESC""",(u,)).fetchall()
     return {"groups":[dict(r) for r in rows]}
 @app.post("/api/groups/{gid}/invites")
 def group_invite_create(gid:int,d:GroupInviteIn,authorization:Optional[str]=Header(default=None)):
@@ -404,7 +404,8 @@ async def group_add(gid:int,d:GroupIn,authorization:Optional[str]=Header(default
     with db() as c:
         g=c.execute("SELECT owner FROM groups_chat WHERE id=?",(gid,)).fetchone()
         if not g:raise HTTPException(404,"Группа не найдена")
-        if g["owner"]!=u:raise HTTPException(403,"Только владелец может добавлять участников")
+        actor=c.execute("SELECT role FROM group_members WHERE group_id=? AND username=?",(gid,u)).fetchone()
+        if not actor or actor["role"] not in ("owner","moderator"):raise HTTPException(403,"Добавлять участников могут только владелец и модераторы")
         for m in d.members:
             if not c.execute("SELECT 1 FROM users WHERE username=?",(m,)).fetchone():raise HTTPException(404,f"Нет пользователя {m}")
             c.execute("INSERT OR IGNORE INTO group_members VALUES(?,?,?,?)",(gid,m,"member",now()))
@@ -433,8 +434,12 @@ async def group_remove_member(gid:int,username:str,authorization:Optional[str]=H
     with db() as c:
         g=c.execute("SELECT owner FROM groups_chat WHERE id=?",(gid,)).fetchone()
         if not g:raise HTTPException(404,"Группа не найдена")
-        if g["owner"]!=u:raise HTTPException(403,"Только владелец может удалять участников")
+        actor=c.execute("SELECT role FROM group_members WHERE group_id=? AND username=?",(gid,u)).fetchone()
+        target=c.execute("SELECT role FROM group_members WHERE group_id=? AND username=?",(gid,username)).fetchone()
+        if not actor or actor["role"] not in ("owner","moderator"):raise HTTPException(403,"Удалять участников могут только владелец и модераторы")
         if username==g["owner"]:raise HTTPException(400,"Владельца нельзя удалить из группы")
+        if not target:raise HTTPException(404,"Участник не найден")
+        if actor["role"]=="moderator" and target["role"]!="member":raise HTTPException(403,"Модератор может удалять только обычных участников")
         cur=c.execute("DELETE FROM group_members WHERE group_id=? AND username=?",(gid,username))
         if not cur.rowcount:raise HTTPException(404,"Участник не найден")
         targets=[x["username"] for x in c.execute("SELECT username FROM group_members WHERE group_id=?",(gid,)).fetchall()]
