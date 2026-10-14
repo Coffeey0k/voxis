@@ -343,12 +343,28 @@ def group_history(gid:int,authorization:Optional[str]=Header(default=None),limit
     return {"messages":[dict(r) for r in reversed(rows)]}
 @app.post("/api/attachments")
 async def attachment_upload(file:UploadFile=File(...),authorization:Optional[str]=Header(default=None)):
-    u=me_user(authorization); b=await file.read(20*1024*1024+1)
-    if len(b)>20*1024*1024:raise HTTPException(413,"Максимальный размер файла 20 МБ")
-    name=secrets.token_hex(24);(UPLOADS/name).write_bytes(b);original=Path(file.filename or "file").name[:180]
+    u=me_user(authorization)
+    # Stream to disk in chunks instead of loading large video files into RAM.
+    name=secrets.token_hex(24); path=UPLOADS/name; size=0; limit=100*1024*1024
+    original=Path(file.filename or "file").name[:180]
+    try:
+        with path.open("wb") as out:
+            while True:
+                chunk=await file.read(1024*1024)
+                if not chunk:break
+                size+=len(chunk)
+                if size>limit:
+                    out.close();path.unlink(missing_ok=True)
+                    raise HTTPException(413,"Максимальный размер файла 100 МБ")
+                out.write(chunk)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
     with db() as c:
-        cur=c.execute("INSERT INTO attachments(owner,stored_name,original_name,content_type,size,created_at) VALUES(?,?,?,?,?,?)",(u,name,original,file.content_type or "application/octet-stream",len(b),now()))
-    return {"id":cur.lastrowid,"name":original,"size":len(b),"content_type":file.content_type,"download_url":f"/api/attachments/{cur.lastrowid}"}
+        cur=c.execute("INSERT INTO attachments(owner,stored_name,original_name,content_type,size,created_at) VALUES(?,?,?,?,?,?)",(u,name,original,file.content_type or "application/octet-stream",size,now()))
+    return {"id":cur.lastrowid,"name":original,"size":size,"content_type":file.content_type,"download_url":f"/api/attachments/{cur.lastrowid}"}
 @app.get("/api/attachments/{aid}")
 def attachment_download(aid:int,authorization:Optional[str]=Header(default=None)):
     u=me_user(authorization)
