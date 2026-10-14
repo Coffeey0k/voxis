@@ -125,3 +125,16 @@ For a VPS, use a reverse proxy with valid TLS, expose only 80/443 publicly, fire
 5. Use WebRTC with DTLS-SRTP, authenticated signaling and STUN/TURN for calls; use an SFU for scalable group calls if needed.
 6. Add FCM/APNs push delivery with revocable tokens and no plaintext message bodies in notifications.
 7. Require cross-platform test vectors, key-change UX, backup/recovery design, independent security review and end-to-end tests before describing Voxis as E2EE.
+
+## Render: постоянное хранение данных
+
+По умолчанию Voxis хранит SQLite-базу в `voxis.sqlite3` рядом с сервером, а загрузки — в каталоге `uploads/`. На хостинге с эфемерной файловой системой эти файлы могут исчезнуть при пересоздании экземпляра или деплое. Сам код не может включить постоянный диск в панели хостинга автоматически.
+
+Для сохранения данных подключи постоянный диск в настройках сервиса Render и задай переменные окружения:
+
+- `VOXIS_DB=/путь/на/постоянном-диске/voxis.sqlite3`
+- `VOXIS_UPLOAD_DIR=/путь/на/постоянном-диске/uploads`
+
+Укажи реальные пути из настроек подключённого диска и убедись, что приложение имеет право записи. Перед сменой путей сделай резервную копию существующей базы и каталога загрузок; переменные сами по себе не переносят уже сохранённые файлы. Если постоянный диск недоступен на выбранном тарифе, используй поддерживаемое хранилище базы и объектов вместо локальной файловой системы.
+
+**Важно:** эти настройки защищают только при корректно подключённом постоянном хранилище. После настройки проверь перезапуском сервиса, что тестовое сообщение и вложение остаются на месте.
