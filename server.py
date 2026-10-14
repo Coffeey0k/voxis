@@ -268,6 +268,7 @@ def group_list(authorization:Optional[str]=Header(default=None)):
 def group_members(gid:int,authorization:Optional[str]=Header(default=None)):
     u=me_user(authorization)
     with db() as c:
+        if not c.execute("SELECT 1 FROM groups_chat WHERE id=?",(gid,)).fetchone():raise HTTPException(404,"Группа не найдена")
         member(c,gid,u); rows=c.execute("SELECT username,role,joined_at FROM group_members WHERE group_id=?",(gid,)).fetchall()
     return {"members":[dict(r) for r in rows]}
 @app.post("/api/groups/{gid}/members")
