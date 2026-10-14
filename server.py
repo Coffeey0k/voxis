@@ -329,20 +329,20 @@ def search_messages(q:str,authorization:Optional[str]=Header(default=None),limit
     return {"messages":[dict(r) for r in rows]}
 
 @app.get("/api/messages/{peer}")
-def direct_history(peer:str,authorization:Optional[str]=Header(default=None),limit:int=100):
+def direct_history(peer:str,authorization:Optional[str]=Header(default=None),limit:int=100,around_id:Optional[int]=None):
     u=me_user(authorization);limit=max(1,min(limit,200))
     with db() as c:
         if not c.execute("SELECT 1 FROM users WHERE username=?",(peer,)).fetchone():raise HTTPException(404,"Пользователь не найден")
         stamp=now()
         c.execute("INSERT OR IGNORE INTO message_receipts(message_id,username,delivered_at,read_at) SELECT id,?,?,NULL FROM messages WHERE sender=? AND recipient=? AND group_id IS NULL",(u,stamp,peer,u))
         c.execute("UPDATE message_receipts SET delivered_at=COALESCE(delivered_at,?) WHERE username=? AND message_id IN (SELECT id FROM messages WHERE sender=? AND recipient=?)",(stamp,u,peer,u))
-        rows=c.execute("""SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.reply_to_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type,rm.body AS reply_body,rm.sender AS reply_sender,(SELECT r.read_at FROM message_receipts r WHERE r.message_id=m.id AND r.username=CASE WHEN m.sender=? THEN m.recipient ELSE ? END) AS read_at,(SELECT r.delivered_at FROM message_receipts r WHERE r.message_id=m.id AND r.username=CASE WHEN m.sender=? THEN m.recipient ELSE ? END) AS delivered_at FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages rm ON rm.id=m.reply_to_id WHERE m.group_id IS NULL AND ((m.sender=? AND m.recipient=?) OR (m.sender=? AND m.recipient=?)) ORDER BY m.id DESC LIMIT ?""",(u,u,u,u,u,peer,peer,u,limit)).fetchall()
+        rows=c.execute("""SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.reply_to_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type,rm.body AS reply_body,rm.sender AS reply_sender,(SELECT r.read_at FROM message_receipts r WHERE r.message_id=m.id AND r.username=CASE WHEN m.sender=? THEN m.recipient ELSE ? END) AS read_at,(SELECT r.delivered_at FROM message_receipts r WHERE r.message_id=m.id AND r.username=CASE WHEN m.sender=? THEN m.recipient ELSE ? END) AS delivered_at FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages rm ON rm.id=m.reply_to_id WHERE m.group_id IS NULL AND ((m.sender=? AND m.recipient=?) OR (m.sender=? AND m.recipient=?)) AND (? IS NULL OR m.id<=?) ORDER BY m.id DESC LIMIT ?""",(u,u,u,u,u,peer,peer,u,around_id,around_id,limit)).fetchall()
     return {"messages":[dict(r) for r in reversed(rows)]}
 @app.get("/api/group-messages/{gid}")
-def group_history(gid:int,authorization:Optional[str]=Header(default=None),limit:int=100):
+def group_history(gid:int,authorization:Optional[str]=Header(default=None),limit:int=100,around_id:Optional[int]=None):
     u=me_user(authorization);limit=max(1,min(limit,200))
     with db() as c:
-        member(c,gid,u);rows=c.execute("SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.reply_to_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type,rm.body AS reply_body,rm.sender AS reply_sender FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages rm ON rm.id=m.reply_to_id WHERE m.group_id=? ORDER BY m.id DESC LIMIT ?",(gid,limit)).fetchall()
+        member(c,gid,u);rows=c.execute("SELECT m.id,m.sender,m.recipient,m.group_id,m.body,m.created_at,m.attachment_id,m.reply_to_id,m.encrypted,a.original_name AS attachment_name,a.size AS attachment_size,a.content_type AS attachment_content_type,rm.body AS reply_body,rm.sender AS reply_sender FROM messages m LEFT JOIN attachments a ON a.id=m.attachment_id LEFT JOIN messages rm ON rm.id=m.reply_to_id WHERE m.group_id=? AND (? IS NULL OR m.id<=?) ORDER BY m.id DESC LIMIT ?",(gid,around_id,around_id,limit)).fetchall()
     return {"messages":[dict(r) for r in reversed(rows)]}
 @app.post("/api/attachments")
 async def attachment_upload(file:UploadFile=File(...),authorization:Optional[str]=Header(default=None)):
