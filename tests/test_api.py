@@ -107,3 +107,10 @@ def test_web_client_is_served_from_root(tmp_path, monkeypatch):
         assert "Voxis" in response.text
         assert 'id="chatList"' in response.text
         assert 'id="authForm"' in response.text
+        assert 'id="themeBtn"' in response.text
+        assert 'id="profileForm"' in response.text
+        assert 'id="fileInput"' in response.text
+        assert 'function connectWS()' in response.text
+        assert 'data-act="edit"' in response.text
+        assert 'data-act="delete"' in response.text
+        assert "body.dark" in response.text
