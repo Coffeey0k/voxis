@@ -2,8 +2,8 @@ import asyncio, hashlib, hmac, os, secrets, sqlite3, threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Header, Request, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 ROOT=Path(__file__).resolve().parent
@@ -11,6 +11,32 @@ DB=Path(os.getenv("VOXIS_DB", str(ROOT/"voxis.sqlite3")))
 UPLOADS=Path(os.getenv("VOXIS_UPLOAD_DIR", str(ROOT/"uploads")))
 UPLOADS.mkdir(parents=True, exist_ok=True)
 app=FastAPI(title="Voxis API", version="0.2.0")
+_rate_lock=threading.Lock()
+_rate_hits={}
+_RATE_RULES=[
+    ("/api/login", "POST", 12, 60),
+    ("/api/register", "POST", 8, 3600),
+    ("/api/attachments", "POST", 30, 60),
+    ("/api/groups/join-by-invite", "POST", 20, 60),
+]
+@app.middleware("http")
+async def rate_limit_sensitive_routes(request:Request, call_next):
+    client=request.client.host if request.client else "unknown"
+    rule=next((r for r in _RATE_RULES if request.url.path==r[0] and request.method==r[1]),None)
+    if rule:
+        path,method,limit,window=rule; key=(client,path); current=datetime.now(timezone.utc).timestamp()
+        with _rate_lock:
+            hits=[t for t in _rate_hits.get(key,[]) if current-t<window]
+            if len(hits)>=limit:
+                _rate_hits[key]=hits
+                return JSONResponse(status_code=429,content={"detail":"Слишком много запросов. Попробуй позже."},headers={"Retry-After":str(max(1,int(window-(current-hits[0]))))})
+            hits.append(current);_rate_hits[key]=hits
+            if len(_rate_hits)>5000:
+                for k,v in list(_rate_hits.items()):
+                    fresh=[t for t in v if current-t<3600]
+                    if fresh:_rate_hits[k]=fresh
+                    else:_rate_hits.pop(k,None)
+    return await call_next(request)
 live: dict[str,set[WebSocket]]={}
 live_lock=threading.Lock()
 _firebase_app=None
