@@ -109,8 +109,50 @@ def test_web_client_is_served_from_root(tmp_path, monkeypatch):
         assert 'id="authForm"' in response.text
         assert 'id="themeBtn"' in response.text
         assert 'id="profileForm"' in response.text
+        assert 'id="settingsOverlay"' in response.text
+        assert 'id="groupInfoOverlay"' in response.text
+        assert 'id="prefNotify"' in response.text
         assert 'id="fileInput"' in response.text
         assert 'function connectWS()' in response.text
         assert 'data-act="edit"' in response.text
         assert 'data-act="delete"' in response.text
         assert "body.dark" in response.text
+
+
+
+def test_group_management_and_device_settings(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DB", tmp_path / "groups.sqlite3")
+    monkeypatch.setattr(server, "UPLOADS", tmp_path / "uploads")
+    server.UPLOADS.mkdir(parents=True, exist_ok=True)
+
+    with TestClient(server.app) as client:
+        alice = register(client, "group_owner")
+        bob = register(client, "group_member")
+        ah = {"Authorization": f"Bearer {alice}"}
+        bh = {"Authorization": f"Bearer {bob}"}
+
+        devices = client.get("/api/devices", headers=ah)
+        assert devices.status_code == 200
+        assert any(x["id"] == "device-group_owner" for x in devices.json()["devices"])
+
+        created = client.post("/api/groups", headers=ah, json={
+            "name": "Test room", "members": ["group_member"]
+        })
+        assert created.status_code == 200, created.text
+        gid = created.json()["id"]
+        assert len(client.get(f"/api/groups/{gid}/members", headers=bh).json()["members"]) == 2
+
+        renamed = client.patch(f"/api/groups/{gid}", headers=ah, json={"name": "Renamed room"})
+        assert renamed.status_code == 200, renamed.text
+        assert any(g["name"] == "Renamed room" for g in client.get("/api/groups", headers=ah).json()["groups"])
+
+        denied = client.patch(f"/api/groups/{gid}", headers=bh, json={"name": "Nope"})
+        assert denied.status_code == 403
+
+        left = client.delete(f"/api/groups/{gid}", headers=bh)
+        assert left.status_code == 200
+        assert client.get(f"/api/groups/{gid}/members", headers=bh).status_code == 403
+
+        deleted = client.delete(f"/api/groups/{gid}", headers=ah)
+        assert deleted.status_code == 200
+        assert client.get(f"/api/groups/{gid}/members", headers=ah).status_code == 404
