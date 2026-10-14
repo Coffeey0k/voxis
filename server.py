@@ -162,6 +162,12 @@ async def notify_message_targets(targets, msg):
             await asyncio.to_thread(push_to_user, target, "message",
                                     {"message_id":msg["id"], "sender":msg["sender"]})
 
+@app.get("/", include_in_schema=False)
+def web_home():
+    index=ROOT/"web"/"index.html"
+    if not index.is_file(): raise HTTPException(404,"Web client is not installed")
+    return FileResponse(index, media_type="text/html; charset=utf-8")
+
 @app.get("/health")
 def health(): return {"ok":True,"app":"Voxis","version":"0.2.0"}
 @app.get("/api/meta")
