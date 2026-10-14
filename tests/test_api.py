@@ -156,3 +156,41 @@ def test_group_management_and_device_settings(tmp_path, monkeypatch):
         deleted = client.delete(f"/api/groups/{gid}", headers=ah)
         assert deleted.status_code == 200
         assert client.get(f"/api/groups/{gid}/members", headers=ah).status_code == 404
+
+
+def test_group_invite_lifecycle_and_owner_permissions(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DB", tmp_path / "invites.sqlite3")
+    monkeypatch.setattr(server, "UPLOADS", tmp_path / "uploads")
+    server.UPLOADS.mkdir(parents=True, exist_ok=True)
+    with TestClient(server.app) as client:
+        owner = register(client, "invite_owner")
+        guest = register(client, "invite_guest")
+        oh = {"Authorization": f"Bearer {owner}"}
+        gh = {"Authorization": f"Bearer {guest}"}
+        created = client.post("/api/groups", headers=oh, json={"name": "Invite room", "members": []})
+        assert created.status_code == 200, created.text
+        gid = created.json()["id"]
+
+        denied = client.post(f"/api/groups/{gid}/invites", headers=gh, json={})
+        assert denied.status_code == 403
+
+        made = client.post(f"/api/groups/{gid}/invites", headers=oh, json={"expires_in_hours": 24, "max_uses": 1})
+        assert made.status_code == 200, made.text
+        token = made.json()["token"]
+        assert len(token) >= 20
+
+        joined = client.post("/api/groups/join-by-invite", headers=gh, json={"token": token})
+        assert joined.status_code == 200, joined.text
+        assert joined.json()["group_id"] == gid
+        assert any(m["username"] == "invite_guest" for m in client.get(f"/api/groups/{gid}/members", headers=gh).json()["members"])
+
+        exhausted = client.post("/api/groups/join-by-invite", headers=oh, json={"token": token})
+        assert exhausted.status_code == 404
+
+        made2 = client.post(f"/api/groups/{gid}/invites", headers=oh, json={})
+        assert made2.status_code == 200, made2.text
+        invite_id = made2.json()["id"]
+        revoked = client.delete(f"/api/groups/{gid}/invites/{invite_id}", headers=oh)
+        assert revoked.status_code == 200
+        rejected = client.post("/api/groups/join-by-invite", headers=oh, json={"token": made2.json()["token"]})
+        assert rejected.status_code == 404
