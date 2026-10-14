@@ -117,6 +117,14 @@ def test_web_client_is_served_from_root(tmp_path, monkeypatch):
         assert 'data-act="edit"' in response.text
         assert 'data-act="delete"' in response.text
         assert "body.dark" in response.text
+        assert 'rel="manifest"' in response.text
+        manifest = client.get("/manifest.webmanifest")
+        assert manifest.status_code == 200
+        assert manifest.json()["display"] == "standalone"
+        assert client.get("/icon.svg").headers["content-type"].startswith("image/svg+xml")
+        worker = client.get("/sw.js")
+        assert worker.status_code == 200
+        assert "voxis-shell-v1" in worker.text
 
 
 
