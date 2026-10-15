@@ -91,3 +91,10 @@ CREATE TABLE IF NOT EXISTS push_tokens (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  platform text NOT NULL CHECK(platform IN ('web','ios','android')), token text NOT NULL UNIQUE, created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS message_reads (
+ message_id uuid NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ read_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(message_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS message_reads_user_idx ON message_reads(user_id,read_at DESC);
