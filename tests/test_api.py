@@ -225,3 +225,34 @@ def test_group_moderator_permissions_are_limited(tmp_path, monkeypatch):
         assert protected.status_code == 403
         denied = client.patch(f"/api/groups/{gid}/members/mod_member", headers=mh, json={"role": "moderator"})
         assert denied.status_code == 403
+
+
+def test_poll_permissions_and_single_vote(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DB", tmp_path / "polls.sqlite3")
+    monkeypatch.setattr(server, "UPLOADS", tmp_path / "uploads")
+    server.UPLOADS.mkdir(parents=True, exist_ok=True)
+    with TestClient(server.app) as client:
+        owner = register(client, "poll_owner")
+        guest = register(client, "poll_guest")
+        outsider = register(client, "poll_outsider")
+        oh = {"Authorization": f"Bearer {owner}"}
+        gh = {"Authorization": f"Bearer {guest}"}
+        xh = {"Authorization": f"Bearer {outsider}"}
+        group = client.post("/api/groups", headers=oh, json={"name": "Poll room", "members": ["poll_guest"]})
+        assert group.status_code == 200, group.text
+        gid = group.json()["id"]
+        created = client.post("/api/polls", headers=oh, json={
+            "group_id": gid, "question": "Choose one", "options": ["A", "B", "C"]
+        })
+        assert created.status_code == 200, created.text
+        poll = created.json()["poll"]
+        assert poll["total_votes"] == 0 and len(poll["options"]) == 3
+        first = client.post(f"/api/polls/{poll['id']}/vote", headers=gh, json={"option_id": poll["options"][0]["id"]})
+        assert first.status_code == 200, first.text
+        second = client.post(f"/api/polls/{poll['id']}/vote", headers=gh, json={"option_id": poll["options"][1]["id"]})
+        assert second.status_code == 200, second.text
+        assert second.json()["poll"]["total_votes"] == 1
+        assert next(o for o in second.json()["poll"]["options"] if o["selected"])["label"] == "B"
+        assert client.get(f"/api/polls/{poll['id']}", headers=xh).status_code == 403
+        duplicate = client.post("/api/polls", headers=oh, json={"group_id": gid, "question": "dup", "options": ["A", "a"]})
+        assert duplicate.status_code == 422
