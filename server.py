@@ -18,6 +18,7 @@ _RATE_RULES=[
     ("/api/register", "POST", 20, 3600),
     ("/api/attachments", "POST", 30, 60),
     ("/api/groups/join-by-invite", "POST", 20, 60),
+    ("/api/polls", "POST", 20, 60),
 ]
 @app.middleware("http")
 async def rate_limit_sensitive_routes(request:Request, call_next):
@@ -185,7 +186,7 @@ def me_user(auth):
 def session(username,device_id,platform):
     token=secrets.token_urlsafe(40)
     with db() as c:
-        c.execute("INSERT INTO sessions VALUES(?,?,?,?)",(tokhash(token),username,device_id,now()))
+        c.execute("INSERT INTO sessions(token_hash,username,device_id,created_at) VALUES(?,?,?,?)",(tokhash(token),username,device_id,now()))
         c.execute("""INSERT INTO devices VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET username=excluded.username,platform=excluded.platform,last_seen=excluded.last_seen""",(device_id,username,platform,None,now(),now()))
     return token
 def profile(r):
