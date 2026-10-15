@@ -26,3 +26,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Validate Compose configuration
+        run: cp .env.example .env && docker compose config --quiet
+      - name: Build API container
+        run: docker build -f Dockerfile.api -t voxis-api:ci .
+      - name: Build web container
+        run: docker build -f Dockerfile.web -t voxis-web:ci .
