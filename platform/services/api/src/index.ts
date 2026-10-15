@@ -25,14 +25,14 @@ const config = z.object({
  OTP_TTL_SECONDS:z.coerce.number().int().min(60).max(900).default(300),
  OTP_DEV_MODE:z.string().default("true"),
  TWILIO_ACCOUNT_SID:z.string().optional(), TWILIO_AUTH_TOKEN:z.string().optional(), TWILIO_FROM_NUMBER:z.string().optional(),
- S3_ENDPOINT:z.string().default("http://localhost:9000"), S3_REGION:z.string().default("us-east-1"),
+ S3_ENDPOINT:z.string().default("http://localhost:9000"), S3_PUBLIC_ENDPOINT:z.string().default("http://localhost:9000"), S3_REGION:z.string().default("us-east-1"),
  S3_BUCKET:z.string().default("voxis"), S3_ACCESS_KEY:z.string().default("minioadmin"),
  S3_SECRET_KEY:z.string().default("change-this-minio-secret"), MAX_UPLOAD_BYTES:z.coerce.number().int().positive().default(104857600)
 }).parse(process.env);
 if(config.NODE_ENV==="production"&&(config.JWT_SECRET.startsWith("development-")||config.OTP_HASH_SECRET.startsWith("development-")||config.OTP_DEV_MODE==="true"))throw new Error("Production requires strong secrets and OTP_DEV_MODE=false.");
 const pool=new Pool({connectionString:config.DATABASE_URL,max:20});
 const redis=new Redis(config.REDIS_URL),pub=new Redis(config.REDIS_URL),sub=new Redis(config.REDIS_URL);
-const s3=new S3Client({region:config.S3_REGION,endpoint:config.S3_ENDPOINT,forcePathStyle:true,credentials:{accessKeyId:config.S3_ACCESS_KEY,secretAccessKey:config.S3_SECRET_KEY}});
+const s3=new S3Client({region:config.S3_REGION,endpoint:config.S3_PUBLIC_ENDPOINT,forcePathStyle:true,credentials:{accessKeyId:config.S3_ACCESS_KEY,secretAccessKey:config.S3_SECRET_KEY}});
 const app=express(),server=http.createServer(app);
 const io=new Server(server,{cors:{origin:config.WEB_ORIGIN.split(",").map(x=>x.trim()),credentials:true},maxHttpBufferSize:1e6});
 io.adapter(createAdapter(pub,sub));
