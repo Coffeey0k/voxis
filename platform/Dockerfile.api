@@ -1,0 +1,19 @@
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY package.json ./
+COPY services/api/package.json services/api/package.json
+COPY apps/web/package.json apps/web/package.json
+RUN npm install
+COPY services/api services/api
+RUN npm --workspace @voxis/api run build
+FROM node:22-alpine
+ENV NODE_ENV=production
+WORKDIR /app
+COPY package.json ./
+COPY services/api/package.json services/api/package.json
+COPY apps/web/package.json apps/web/package.json
+RUN npm install --omit=dev
+COPY --from=build /app/services/api/dist services/api/dist
+USER node
+EXPOSE 4000
+CMD ["node", "services/api/dist/index.js"]
