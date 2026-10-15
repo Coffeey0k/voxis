@@ -99,6 +99,33 @@ def migrate():
             CREATE INDEX IF NOT EXISTS idx_receipts_user ON message_receipts(username,read_at);
             """)
             c.execute("INSERT INTO schema_migrations VALUES(4,?)",(now(),))
+
+        if 6 not in done:
+            c.executescript("""
+            CREATE TABLE IF NOT EXISTS polls(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                creator TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+                recipient TEXT REFERENCES users(username) ON DELETE CASCADE,
+                group_id INTEGER REFERENCES groups_chat(id) ON DELETE CASCADE,
+                question TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                CHECK((recipient IS NOT NULL AND group_id IS NULL) OR (recipient IS NULL AND group_id IS NOT NULL))
+            );
+            CREATE TABLE IF NOT EXISTS poll_options(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+                label TEXT NOT NULL,
+                UNIQUE(poll_id,label)
+            );
+            CREATE TABLE IF NOT EXISTS poll_votes(
+                poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+                option_id INTEGER NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+                username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(poll_id,username)
+            );
+            INSERT INTO schema_migrations VALUES(6,datetime('now'));
+            """)
 @app.on_event("startup")
 def startup(): migrate()
 
@@ -120,6 +147,13 @@ class GroupInviteIn(BaseModel):
     max_uses:Optional[int]=Field(default=None,ge=1,le=10000)
 class GroupJoinInvite(BaseModel):
     token:str=Field(min_length=20,max_length=100)
+class PollIn(BaseModel):
+    question:str=Field(min_length=1,max_length=240)
+    options:list[str]=Field(min_length=2,max_length=10)
+    recipient:Optional[str]=None
+    group_id:Optional[int]=None
+class PollVoteIn(BaseModel):
+    option_id:int=Field(gt=0)
 class MessageIn(BaseModel):
     recipient:Optional[str]=None; group_id:Optional[int]=None
     body:str=Field(default="",max_length=4000); attachment_id:Optional[int]=None; reply_to_id:Optional[int]=None; encrypted:bool=False
@@ -697,6 +731,73 @@ def unread_counts(authorization:Optional[str]=Header(default=None)):
         direct=c.execute("""SELECT sender AS peer,COUNT(*) AS count FROM messages m WHERE recipient=? AND group_id IS NULL AND NOT EXISTS(SELECT 1 FROM message_receipts r WHERE r.message_id=m.id AND r.username=? AND r.read_at IS NOT NULL) GROUP BY sender""",(u,u)).fetchall()
         groups=c.execute("""SELECT m.group_id,COUNT(*) AS count FROM messages m JOIN group_members gm ON gm.group_id=m.group_id AND gm.username=? WHERE m.sender<>? AND m.created_at>=gm.joined_at AND NOT EXISTS(SELECT 1 FROM message_receipts r WHERE r.message_id=m.id AND r.username=? AND r.read_at IS NOT NULL) GROUP BY m.group_id""",(u,u,u)).fetchall()
     return {"users":{x["peer"]:x["count"] for x in direct},"groups":{str(x["group_id"]):x["count"] for x in groups}}
+
+
+def _poll_payload(c, poll_id, username):
+    poll=c.execute("SELECT * FROM polls WHERE id=?",(poll_id,)).fetchone()
+    if not poll: raise HTTPException(404,"Опрос не найден")
+    if poll["group_id"] is not None:
+        member(c,poll["group_id"],username)
+    elif username not in (poll["creator"],poll["recipient"]):
+        raise HTTPException(403,"Нет доступа к опросу")
+    options=c.execute("""SELECT o.id,o.label,COUNT(v.username) AS votes,
+        MAX(CASE WHEN v.username=? THEN 1 ELSE 0 END) AS selected
+        FROM poll_options o LEFT JOIN poll_votes v ON v.option_id=o.id
+        WHERE o.poll_id=? GROUP BY o.id ORDER BY o.id""",(username,poll_id)).fetchall()
+    total=sum(o["votes"] for o in options)
+    return {"id":poll["id"],"creator":poll["creator"],"recipient":poll["recipient"],
+            "group_id":poll["group_id"],"question":poll["question"],"created_at":poll["created_at"],
+            "total_votes":total,"options":[{"id":o["id"],"label":o["label"],"votes":o["votes"],
+            "selected":bool(o["selected"]),"percent":round(o["votes"]*100/total) if total else 0} for o in options]}
+
+@app.post("/api/polls")
+def create_poll(d:PollIn,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    question=d.question.strip()
+    options=[x.strip() for x in d.options]
+    if not question: raise HTTPException(422,"Вопрос не может быть пустым")
+    if bool(d.recipient)==bool(d.group_id): raise HTTPException(400,"Укажи recipient или group_id")
+    if any(not x or len(x)>120 for x in options): raise HTTPException(422,"Варианты должны содержать от 1 до 120 символов")
+    if len({x.casefold() for x in options})!=len(options): raise HTTPException(422,"Варианты должны быть уникальными")
+    with db() as c:
+        if d.recipient:
+            if d.recipient==u or not c.execute("SELECT 1 FROM users WHERE username=?",(d.recipient,)).fetchone():
+                raise HTTPException(404,"Получатель не найден")
+            if c.execute("SELECT 1 FROM blocked_users WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)",(u,d.recipient,d.recipient,u)).fetchone():
+                raise HTTPException(403,"Опрос этому пользователю недоступен")
+        else: member(c,d.group_id,u)
+        cur=c.execute("INSERT INTO polls(creator,recipient,group_id,question,created_at) VALUES(?,?,?,?,?)",(u,d.recipient,d.group_id,question,now()))
+        pid=cur.lastrowid
+        c.executemany("INSERT INTO poll_options(poll_id,label) VALUES(?,?)",[(pid,x) for x in options])
+        result=_poll_payload(c,pid,u)
+        targets=[u,d.recipient] if d.recipient else [r["username"] for r in c.execute("SELECT username FROM group_members WHERE group_id=?",(d.group_id,)).fetchall()]
+    # Keep notifications generic; poll text may be private.
+    for target in targets:
+        awaitable_payload={"type":"poll_created","poll_id":pid}
+        try:
+            loop=asyncio.get_running_loop()
+            loop.create_task(notify(target,awaitable_payload))
+        except RuntimeError: pass
+    return {"poll":result}
+
+@app.get("/api/polls/{poll_id}")
+def get_poll(poll_id:int,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c: return {"poll":_poll_payload(c,poll_id,u)}
+
+@app.post("/api/polls/{poll_id}/vote")
+def vote_poll(poll_id:int,d:PollVoteIn,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    with db() as c:
+        poll=c.execute("SELECT * FROM polls WHERE id=?",(poll_id,)).fetchone()
+        if not poll: raise HTTPException(404,"Опрос не найден")
+        if poll["group_id"] is not None: member(c,poll["group_id"],u)
+        elif u not in (poll["creator"],poll["recipient"]): raise HTTPException(403,"Нет доступа к опросу")
+        if not c.execute("SELECT 1 FROM poll_options WHERE id=? AND poll_id=?",(d.option_id,poll_id)).fetchone():
+            raise HTTPException(400,"Вариант ответа не относится к этому опросу")
+        c.execute("INSERT INTO poll_votes(poll_id,option_id,username,created_at) VALUES(?,?,?,?) ON CONFLICT(poll_id,username) DO UPDATE SET option_id=excluded.option_id,created_at=excluded.created_at",(poll_id,d.option_id,u,now()))
+        result=_poll_payload(c,poll_id,u)
+    return {"poll":result}
 
 @app.get("/api/pinned-messages")
 def list_pinned(authorization:Optional[str]=Header(default=None)):
