@@ -751,7 +751,7 @@ def _poll_payload(c, poll_id, username):
             "selected":bool(o["selected"]),"percent":round(o["votes"]*100/total) if total else 0} for o in options]}
 
 @app.post("/api/polls")
-def create_poll(d:PollIn,authorization:Optional[str]=Header(default=None)):
+async def create_poll(d:PollIn,authorization:Optional[str]=Header(default=None)):
     u=me_user(authorization)
     question=d.question.strip()
     options=[x.strip() for x in d.options]
@@ -773,12 +773,25 @@ def create_poll(d:PollIn,authorization:Optional[str]=Header(default=None)):
         targets=[u,d.recipient] if d.recipient else [r["username"] for r in c.execute("SELECT username FROM group_members WHERE group_id=?",(d.group_id,)).fetchall()]
     # Keep notifications generic; poll text may be private.
     for target in targets:
-        awaitable_payload={"type":"poll_created","poll_id":pid}
-        try:
-            loop=asyncio.get_running_loop()
-            loop.create_task(notify(target,awaitable_payload))
-        except RuntimeError: pass
+        await notify(target,{"type":"poll_created","poll_id":pid})
     return {"poll":result}
+
+@app.get("/api/polls")
+def list_polls(group_id:Optional[int]=None,recipient:Optional[str]=None,authorization:Optional[str]=Header(default=None)):
+    u=me_user(authorization)
+    if bool(group_id)==bool(recipient): raise HTTPException(400,"Укажи group_id или recipient")
+    with db() as c:
+        if group_id is not None:
+            member(c,group_id,u)
+            rows=c.execute("SELECT id FROM polls WHERE group_id=? ORDER BY id DESC LIMIT 50",(group_id,)).fetchall()
+        else:
+            if recipient not in (u,):
+                with db() as check:
+                    if not check.execute("SELECT 1 FROM users WHERE username=?",(recipient,)).fetchone(): raise HTTPException(404,"Пользователь не найден")
+            if c.execute("SELECT 1 FROM blocked_users WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)",(u,recipient,recipient,u)).fetchone():
+                raise HTTPException(403,"Опросы недоступны")
+            rows=c.execute("SELECT id FROM polls WHERE group_id IS NULL AND ((creator=? AND recipient=?) OR (creator=? AND recipient=?)) ORDER BY id DESC LIMIT 50",(u,recipient,recipient,u)).fetchall()
+        return {"polls":[_poll_payload(c,r["id"],u) for r in rows]}
 
 @app.get("/api/polls/{poll_id}")
 def get_poll(poll_id:int,authorization:Optional[str]=Header(default=None)):
