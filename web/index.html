@@ -52,6 +52,31 @@ body.dark .settingitem{background:#1d2a36;border-color:#2c3c4b}body.dark .settin
 body.dark .upload-progress{background:#1b2b38}body.dark .modal p{color:#9aabba}
 @media(min-width:1100px){.app{grid-template-columns:370px minmax(0,1fr)}.sidebar{padding-bottom:2px}.chathead{padding-left:22px;padding-right:22px}.messages{padding-left:clamp(30px,5vw,78px);padding-right:clamp(30px,5vw,78px)}}
 @media(max-width:700px){body{background:#fff}.app{box-shadow:none}.sidebar{background:#fff}.brand{padding:12px 12px 10px}.userbar{margin:0 9px 10px}.chathead{height:60px;padding:0 8px;gap:8px}.chathead .avatar{width:39px;height:39px}.head-actions .iconbtn{width:31px;height:34px;font-size:17px}.messages{padding:13px 9px;gap:6px}.bubble{max-width:88%;font-size:14px}.composer{padding:8px 8px calc(8px + env(safe-area-inset-bottom));gap:4px}.filebtn{min-width:34px;width:34px;height:40px;font-size:20px}.composer textarea{min-height:40px;padding:10px 13px}.send{width:40px;min-width:40px;height:40px}.modal{padding:22px 19px;border-radius:17px}.folder-tabs{padding-bottom:8px}.chatrow{padding:9px 8px}.chatrow .avatar{width:46px;height:46px}}
+
+/* Message action toolbar, popovers, and interaction polish */
+.msg-actions{display:flex;align-items:center;gap:2px;justify-content:flex-end;margin:3px -3px -1px;opacity:0;max-height:0;overflow:hidden;pointer-events:none;transition:opacity .14s,max-height .14s}
+.bubble:hover .msg-actions,.bubble:focus-within .msg-actions{opacity:1;max-height:34px;pointer-events:auto}
+.msg-actions button{width:29px;height:28px;display:inline-grid;place-items:center;padding:0;border-radius:50%;background:#f0f5f8;color:#648095;font-size:0;line-height:1;transition:background .12s,color .12s,transform .12s}
+.msg-actions button::before{font-size:15px;content:"•"}
+.msg-actions button[data-act="reply"]::before{content:"↩"}
+.msg-actions button[data-act="react"]::before{content:"☺"}
+.msg-actions button[data-act="pin"]::before{content:"⌖"}
+.msg-actions button[data-act="forward"]::before{content:"➦"}
+.msg-actions button[data-act="edit"]::before{content:"✎"}
+.msg-actions button[data-act="delete"]::before{content:"×";font-size:18px}
+.msg-actions button:hover{background:#dcecf8;color:#2585d3;transform:translateY(-1px)}
+.bubble.mine .msg-actions button{background:#c5edbd;color:#527b4d}
+.bubble.mine .msg-actions button:hover{background:#b4e5aa;color:#315d2e}
+.chatrow:focus-visible,.iconbtn:focus-visible,.folder-tab:focus-visible,.filebtn:focus-visible,.send:focus-visible,.primary:focus-visible,.msg-actions button:focus-visible{outline:2px solid #3390ec;outline-offset:2px}
+button,input,textarea,select{transition:border-color .14s,background-color .14s,color .14s}
+button:active:not(:disabled){transform:scale(.98)}
+.settingitem{transition:background .12s,border-color .12s}
+.settingitem:hover{background:#f1f7fb;border-color:#d5e8f7}
+body.dark .msg-actions button{background:#2b3c49;color:#b1c7d7}
+body.dark .bubble.mine .msg-actions button{background:#2b5a4b;color:#c1ead9}
+body.dark .settingitem:hover{background:#203747;border-color:#34546b}
+@media(hover:none){.msg-actions{opacity:1;max-height:34px;pointer-events:auto}.msg-actions button{width:27px;height:27px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
 </style>
 </head>
 <body>
