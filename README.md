@@ -3,18 +3,20 @@
 **Verified in this environment:** Python syntax check and one automated API integration test (account creation, direct message, profile, group message, device list, migrations). **Not verified:** PySide6 desktop runtime, Flutter/Dart compilation, APK build, production deployment, E2EE, calls or push notifications. This repository is a development MVP, not a secure production messenger.
 
 ## Included now
-- FastAPI API, SQLite schema migrations 1–3 and password hashing with scrypt
+- FastAPI API, SQLite schema migrations 1–6 and password hashing with scrypt
 - PySide6 desktop UI; fixes the crash by adding `sidebar` (a QWidget) instead of `side` (a QVBoxLayout)
-- Accounts, direct text messages, basic group chat, profile fields
+- Accounts, direct text messages, basic group chat, profile fields, invite links and group moderator roles
+- Group/direct polls with 2–10 options, one vote per user (changeable), vote counts and percentages
 - Avatar upload API and attachment upload/download API
 - Device registry/list/revoke API
-- WebSocket message delivery, presence/typing events, read receipts and a minimal call-signaling event hook
+- WebSocket message delivery, presence/typing events, read receipts, live poll notifications and a minimal call-signaling event hook
 - Optional server-side Firebase Cloud Messaging push dispatch (FCM HTTP v1) with generic, privacy-preserving notification text; requires service-account configuration and client token registration
 - Flutter starter Android client for login, user/group selection and text messages
 - API integration test, PyInstaller desktop build script, and GitHub Actions workflow that builds an installable debug APK artifact
 
 ## Important unfinished work
 - **E2EE is not implemented.** Message bodies are stored as plaintext. The `encrypted` field is only metadata.
+- **Production hardening is still required.** The built-in rate limiter is in-memory and per-process; deploy behind HTTPS, configure persistent storage, backups, monitoring and a shared rate-limit store before public use.
 - **Voice/video calls are not implemented.** Signaling hooks do not transmit media. A real implementation needs WebRTC, STUN/TURN, call-state handling, device permissions, and likely an SFU for group calls.
 - **Push notifications are only partially integrated.** The server can dispatch FCM notifications when configured, but the mobile client still needs Firebase SDK initialization, runtime permission/token handling, and registration via `POST /api/devices`. Real delivery has not been verified without Firebase credentials.
 - Android app currently has a starter UI; it does not yet include all profile/avatar/file/device-management screens.
